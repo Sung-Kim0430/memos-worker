@@ -714,17 +714,41 @@ async function handleNoteDetail(request, noteId, env) {
 			}
 
 			case 'DELETE': {
-				// 删除 R2 中的文件
+				let allR2KeysToDelete = [];
+
 				if (existingNote.files && existingNote.files.length > 0) {
-					const r2KeysToDelete = existingNote.files
+					const attachmentKeys = existingNote.files
 						.filter(file => file.id)
 						.map(file => `${id}/${file.id}`);
-					if (r2KeysToDelete.length > 0) {
-						await env.NOTES_R2_BUCKET.delete(r2KeysToDelete);
-					}
+					allR2KeysToDelete.push(...attachmentKeys);
 				}
-				// 从数据库中删除笔记
+				let picUrls = [];
+				if (typeof existingNote.pics === 'string') {
+					try { picUrls = JSON.parse(existingNote.pics); } catch (e) { }
+				}
+
+				if (picUrls.length > 0) {
+					const imageKeys = picUrls.map(url => {
+						const imageMatch = url.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
+						if (imageMatch) {
+							return `uploads/${imageMatch[1]}`;
+						}
+						const fileMatch = url.match(/^\/api\/files\/\d+\/([a-zA-Z0-9-]+)$/);
+						if (fileMatch) {
+							return `${id}/${fileMatch[1]}`;
+						}
+						return null;
+					}).filter(key => key !== null);
+
+					allR2KeysToDelete.push(...imageKeys);
+				}
+
+				if (allR2KeysToDelete.length > 0) {
+					await env.NOTES_R2_BUCKET.delete(allR2KeysToDelete);
+				}
+
 				await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
+
 				return new Response(null, { status: 204 });
 			}
 		}
@@ -1930,54 +1954,44 @@ async function handleMergeNotes(request, env) {
 			return jsonResponse({ error: 'Invalid source or target note ID.' }, 400);
 		}
 
-		const [noteA, noteB] = await Promise.all([
+		const [sourceNote, targetNote] = await Promise.all([
 			db.prepare("SELECT * FROM notes WHERE id = ?").bind(sourceNoteId).first(),
 			db.prepare("SELECT * FROM notes WHERE id = ?").bind(targetNoteId).first(),
 		]);
 
-		if (!noteA || !noteB) {
+		if (!sourceNote || !targetNote) {
 			return jsonResponse({ error: 'One or both notes not found.' }, 404);
 		}
 
-		// --- 核心逻辑：根据时间戳确定新旧笔记 ---
-		let newerNote, olderNote;
-		if (noteA.updated_at >= noteB.updated_at) {
-			newerNote = noteA;
-			olderNote = noteB;
-		} else {
-			newerNote = noteB;
-			olderNote = noteA;
-		}
+		// 目标笔记在前，源笔记在后
+		const separator = addSeparator ? '\n\n---\n\n' : '\n\n';
+		const mergedContent = targetNote.content + separator + sourceNote.content;
+		const targetFiles = JSON.parse(targetNote.files || '[]');
+		const sourceFiles = JSON.parse(sourceNote.files || '[]');
+		const mergedFiles = JSON.stringify([...targetFiles, ...sourceFiles]);
 
-		// 1. 合并内容：新笔记在前，旧笔记在后
-		// 根据前端传来的 addSeparator 参数决定是否添加分割线
-		const separator = addSeparator ? '\n\n---\n\n' : '\n\n'; // 如果不加，也保留两个换行符
-		const mergedContent = newerNote.content + separator + olderNote.content;
-
-		// 2. 合并文件
-		const newerFiles = JSON.parse(newerNote.files || '[]');
-		const olderFiles = JSON.parse(olderNote.files || '[]');
-		const mergedFiles = JSON.stringify([...newerFiles, ...olderFiles]);
-
-		// 3. 时间戳：取两个笔记中较老的一个
-		const mergedTimestamp = Math.min(noteA.updated_at, noteB.updated_at);
+		const mergedTimestamp = targetNote.updated_at;
 
 		// --- 数据库与 R2 操作 ---
 
+		// 更新目标笔记
 		const stmt = db.prepare(
 			"UPDATE notes SET content = ?, files = ?, updated_at = ? WHERE id = ?"
 		);
-		await stmt.bind(mergedContent, mergedFiles, mergedTimestamp, newerNote.id).run();
+		await stmt.bind(mergedContent, mergedFiles, mergedTimestamp, targetNote.id).run();
 
-		await processNoteTags(db, newerNote.id, mergedContent);
+		// 为更新后的目标笔记重新处理标签
+		await processNoteTags(db, targetNote.id, mergedContent);
 
-		await db.prepare("DELETE FROM notes WHERE id = ?").bind(olderNote.id).run();
+		// 删除源笔记
+		await db.prepare("DELETE FROM notes WHERE id = ?").bind(sourceNote.id).run();
 
-		if (olderFiles.length > 0) {
+		// 将源笔记的文件移动到目标笔记的 R2 目录下
+		if (sourceFiles.length > 0) {
 			const r2 = env.NOTES_R2_BUCKET;
-			for (const file of olderFiles) {
-				const oldKey = `${olderNote.id}/${file.id}`;
-				const newKey = `${newerNote.id}/${file.id}`;
+			for (const file of sourceFiles) {
+				const oldKey = `${sourceNote.id}/${file.id}`;
+				const newKey = `${targetNote.id}/${file.id}`;
 				const object = await r2.get(oldKey);
 				if (object) {
 					await r2.put(newKey, object.body);
@@ -1986,7 +2000,8 @@ async function handleMergeNotes(request, env) {
 			}
 		}
 
-		const updatedMergedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(newerNote.id).first();
+		// 返回更新后的目标笔记
+		const updatedMergedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(targetNote.id).first();
 		if (typeof updatedMergedNote.files === 'string') {
 			updatedMergedNote.files = JSON.parse(updatedMergedNote.files);
 		}
