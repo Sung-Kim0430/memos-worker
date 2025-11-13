@@ -8,7 +8,7 @@ run_worker_first = [
 ]
 
 [[d1_databases]]
-binding = "DB"
+binding = "NOTES_DB"
 database_id = "c1437068-e546-4410-a103-da7ec4a2d73d"
 database_name = "memos-worker-db"
 
