@@ -3006,6 +3006,44 @@
   #fs-color-popover {
 	position: absolute;
   }
+
+
+  .note-content.truncated {
+	max-height: 350px; /* 控制折叠时的高度 */
+	overflow: hidden;
+	position: relative;
+	/* 在底部添加一个渐变蒙版，以示还有更多内容 */
+	-webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+	mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  }
+
+  .note.is-expanded .note-content.truncated {
+	max-height: none; /* 移除高度限制 */
+	-webkit-mask-image: none;
+	mask-image: none;
+  }
+
+  .toggle-content-btn {
+	display: none; /* 默认隐藏 */
+	margin-top: 0.5rem;
+	font-size: 0.85rem;
+	font-weight: 500;
+	color: var(--primary-color);
+	background: none;
+	border: none;
+	padding: 4px 0;
+	cursor: pointer;
+  }
+
+  .toggle-content-btn:hover {
+	text-decoration: underline;
+	background: none;
+	transform: none;
+  }
+
+  .note.is-long .toggle-content-btn {
+	display: inline-block; /* 当笔记很长时显示按钮 */
+  }
 </style>
 <body class='loading' data-theme='dark'>
 <div id='initial-loader'>
@@ -3501,6 +3539,10 @@
 					<label for='toggle-date-grouping'>Enable Date Grouping</label>
 					<input type='checkbox' id='toggle-date-grouping' class='toggle-switch'>
 				</div>
+				<div class='setting-item'>
+					<label for='toggle-content-truncation'>Enable Content Truncation</label>
+					<input type='checkbox' id='toggle-content-truncation' class='toggle-switch'>
+				</div>
 			</div>
 
 
@@ -3703,6 +3745,7 @@
 <script>
 	// --- 配置 marked.js ---
 	const renderer = new marked.Renderer();
+	const NOTE_TRUNCATE_LENGTH = 800; // 笔记折叠的字数阈值
 	const originalTableRenderer = renderer.table.bind(renderer);
 	const originalLinkRenderer = renderer.link.bind(renderer);
 	renderer.table = (header, body) => {
@@ -4098,7 +4141,8 @@
 		showArchive: true,      // 控制归档
 		enablePinning: true,    // 控制置顶功能
 		enableSharing: true,    // 控制分享功能
-		showDocs: true          // 控制 Docs 链接
+		showDocs: true,          // 控制 Docs 链接
+		enableContentTruncation: true,
 	}
 	let settings = defaultSettings;
 
@@ -5513,6 +5557,7 @@
 		waterfallWidthSlider.value = settings.waterfallCardWidth;
 		waterfallWidthValue.textContent = `${settings.waterfallCardWidth}px`;
 		toggleDateGrouping.checked = settings.enableDateGrouping;
+		document.getElementById('toggle-content-truncation').checked = settings.enableContentTruncation;
 		toggleTelegramProxy.checked = settings.telegramProxy;
 		document.getElementById('toggle-feature-favorites').checked = settings.showFavorites;
 		document.getElementById('toggle-feature-archive').checked = settings.showArchive;
@@ -5614,6 +5659,11 @@
 			}
 			applySettings();
 			reloadNotes();
+		});
+		const toggleContentTruncation = document.getElementById('toggle-content-truncation');
+		toggleContentTruncation.addEventListener('change', (e) => {
+			settings.enableContentTruncation = e.target.checked;
+			reRenderCachedNotes();
 		});
 		imgurClientIdInput.addEventListener('input', (e) => {
 			settings.imgurClientId = e.target.value.trim();
@@ -7273,8 +7323,17 @@
 	}
 
 	function createNoteElement(note) {
+		let isLongContent = false;
+		if (settings.enableContentTruncation) {
+			isLongContent = note.content.length > NOTE_TRUNCATE_LENGTH;
+		}
+
 		const noteElement = document.createElement('div');
 		noteElement.className = 'note';
+
+		if (isLongContent) {
+			noteElement.classList.add('is-long');
+		}
 		const noteId = note.id;
 		noteElement.dataset.id = noteId;
 		const time = formatTimestamp(note.updated_at);
@@ -7379,6 +7438,7 @@
 									</div>
 									<div class='note-content view-mode'></div>
 									${attachmentsHTML}
+    							<button class='toggle-content-btn'>Show more</button>
 									<div class='edit-area edit-mode'>
 											<textarea class='edit-textarea' placeholder='Memos here...'></textarea>
 											<div class='edit-preview note-content'></div>
@@ -7388,6 +7448,9 @@
 							`;
 		noteElement.querySelector('.note-content').innerHTML = postProcessMarkdownHtml(marked.parse(note.content));
 
+		if (isLongContent) {
+			noteElement.querySelector('.note-content.view-mode').classList.add('truncated');
+		}
 		noteElement.querySelector('.edit-textarea').value = note.content;
 
 		return noteElement;
@@ -7865,6 +7928,19 @@
 	// --- Event Delegation for Notes Container (Corrected for SVG Icons) ---
 	notesContainer.addEventListener('click', async e => {
 		const target = e.target;
+
+		if (target.classList.contains('toggle-content-btn')) {
+			const noteElement = target.closest('.note');
+			if (noteElement) {
+				noteElement.classList.toggle('is-expanded');
+				if (noteElement.classList.contains('is-expanded')) {
+					target.textContent = 'Collapse';
+				} else {
+					target.textContent = 'Show more';
+				}
+			}
+			return;
+		}
 		const shareBtn = target.closest('.share-file-btn');
 		if (shareBtn) {
 			e.preventDefault();

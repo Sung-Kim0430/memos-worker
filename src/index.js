@@ -447,7 +447,8 @@ async function handleGetSettings(request, env) {
 		showArchive: true,      // 控制归档
 		enablePinning: true,    // 控制置顶功能
 		enableSharing: true,    // 控制分享功能
-		showDocs: true          // 控制 Docs 链接
+		showDocs: true,          // 控制 Docs 链接
+		enableContentTruncation: false,
 	};
 
 	let savedSettings = await env.NOTES_KV.get('user_settings', 'json');
