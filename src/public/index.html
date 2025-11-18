@@ -142,6 +142,29 @@
 	border-radius: 50%;
 	animation: spin 1s linear infinite;
   }
+#language-switcher {
+	display: none;
+	position: fixed;
+	top: 12px;
+	right: 12px;
+	z-index: 10000;
+	background: var(--surface-color);
+	border: 1px solid var(--border-color);
+	border-radius: .5rem;
+	padding: 6px 8px;
+	box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  }
+  .language-select,
+  #language-switcher select {
+	border: none;
+	background: transparent;
+	color: var(--text-color);
+	font-size: 0.95rem;
+	outline: none;
+  }
+  body.auth-visible #language-switcher {
+	display: block;
+  }
   #auth-container, #app-container {
 	display: none;
   }
@@ -3049,6 +3072,13 @@
 <div id='initial-loader'>
 	<div class='spinner'></div>
 </div>
+<div id='language-switcher'>
+	<select id='language-select' aria-label='Language'>
+		<option value='en'>English</option>
+		<option value='zh'>简体中文</option>
+		<option value='system'>Follow system</option>
+	</select>
+</div>
 <!-- Login Screen -->
 <div id='auth-container'>
 	<form id='login-form' class='auth-form'>
@@ -3504,9 +3534,20 @@
 			<h3>Settings</h3>
 			<button id='close-settings-btn' class='icon-btn'>&times;</button>
 		</header>
-		<div class='settings-content'>
-			<div class='setting-group'>
-				<h4>Interface Visibility</h4>
+			<div class='settings-content'>
+				<div class='setting-group'>
+					<h4>Language</h4>
+					<div class='setting-item'>
+						<label for='settings-language-select'>Language</label>
+						<select id='settings-language-select' class='language-select'>
+							<option value='zh'>中文</option>
+							<option value='en'>English</option>
+							<option value='system'>Follow system</option>
+						</select>
+					</div>
+				</div>
+				<div class='setting-group'>
+					<h4>Interface Visibility</h4>
 				<div class='setting-item'>
 					<label for='toggle-search-bar'>Show Search</label>
 					<input type='checkbox' id='toggle-search-bar' class='toggle-switch'>
@@ -3635,13 +3676,13 @@
 					<div class='setting-item'>
 						<label for='upload-dest-imgur'>
 							<input type='radio' id='upload-dest-imgur' name='upload-destination' value='imgur'>
-							Imgur (Requires Client ID)
+							Imgur（需要 Client ID）
 						</label>
 					</div>
 				</div>
 				<div class='setting-item' id='imgur-client-id-wrapper' style='display: flex;'>
 					<label for='imgur-client-id'>Imgur Client ID</label>
-					<input type='text' id='imgur-client-id' placeholder='Enter your Imgur Client ID...'>
+					<input type='text' id='imgur-client-id' placeholder='输入 Imgur Client ID...'>
 				</div>
 			</div>
 			<div class='setting-group'>
@@ -3743,6 +3784,470 @@
 </html>
 
 <script>
+	const LANGUAGE_STORAGE_KEY = 'memos-lang';
+	const supportedLanguages = ['en', 'zh', 'system'];
+	function resolveLanguage(pref) {
+		if (!pref || pref === 'system') {
+			const navLang = (navigator.language || navigator.userLanguage || 'en').toLowerCase();
+			return navLang.startsWith('zh') ? 'zh' : 'en';
+		}
+		return pref;
+	}
+	let languagePreference = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+	if (!languagePreference || !supportedLanguages.includes(languagePreference)) {
+		languagePreference = 'system';
+	}
+	let currentLanguage = resolveLanguage(languagePreference);
+	const languageSelect = document.getElementById('language-select');
+	const settingsLanguageSelect = document.getElementById('settings-language-select');
+
+	const translations = {
+		en: {
+			langLabel: 'English',
+			strings: {
+				login: 'Login',
+				loggingIn: 'Logging in...',
+				usernamePlaceholder: 'Username',
+				passwordPlaceholder: 'Password',
+				searchPlaceholder: 'Search...',
+				clear: 'Clear',
+				clearTagFilter: 'Clear tag filter',
+				showAllNotes: 'Show All Notes',
+				refresh: 'Refresh',
+				toggleWaterfall: 'Toggle waterfall mode',
+				toggleWide: 'Toggle wide mode',
+				moreOptions: 'More options',
+				themeColor: 'Theme Color',
+				logout: 'Logout',
+				getPublicLink: 'Get public link',
+				languageLabel: 'Language',
+				languageFollowSystem: 'Follow system',
+				languageChinese: '中文',
+				languageEnglish: 'English',
+				prevMonth: 'Previous month',
+				nextMonth: 'Next month',
+				filterNotesFor: 'Filter notes for',
+				videoFromNote: 'Video from note',
+				close: 'Close',
+				notePlaceholder: 'Write in Markdown...',
+				insertTag: 'Insert tag (#)',
+				insertImage: 'Insert image',
+				selectFiles: 'Select files',
+				fullscreenEditor: 'Fullscreen Editor',
+				togglePreview: 'Toggle Preview',
+				toggleSplit: 'Toggle Split View',
+				searchOrSelectTag: 'Search or select tag...',
+				save: 'Save',
+				saving: 'Saving...',
+				loading: 'Loading...',
+				loadingMore: 'Loading more...',
+				noMoreNotes: 'No more notes.',
+				nothingHere: 'Nothing here yet.',
+				failedToLoadPrefix: 'Failed to load:',
+				pinned: 'Pinned',
+				showMore: 'Show more',
+				collapse: 'Collapse',
+				revoking: 'Revoking...',
+				updating: 'Updating...',
+				updated: 'Updated!',
+				errored: 'Error!',
+				copied: 'Copied!',
+				copyCode: 'Copy code',
+				copyFailed: 'Copy failed!',
+				lightMode: 'Light Mode',
+				darkMode: 'Dark Mode',
+				note: 'note',
+				notes: 'notes'
+			},
+			messages: {
+				'Invalid username or password.': 'Invalid username or password.',
+				'Are you sure you want to delete this note?': 'Are you sure you want to delete this note?',
+				'Are you sure you want to permanently delete this file? This action cannot be undone.': 'Are you sure you want to permanently delete this file? This action cannot be undone.',
+				'Are you sure you want to revoke the public links immediately? This action cannot be undone.': 'Are you sure you want to revoke the public links immediately? This action cannot be undone.',
+				'Sharing has been successfully revoked.': 'Sharing has been successfully revoked.',
+				'Failed to copy link.': 'Failed to copy link.',
+				'Content or a file is required.': 'Content or a file is required.',
+				'Error: Original note element not found.': 'Error: Original note element not found.',
+				'A file is required for upload.': 'A file is required for upload.',
+				'Upload failed': 'Upload failed',
+				'File deleted successfully.': 'File deleted successfully.',
+				'File and empty note removed.': 'File and empty note removed.',
+				'Notes merged successfully!': 'Notes merged successfully!'
+			},
+			textMap: {}
+		},
+		zh: {
+			langLabel: '简体中文',
+			strings: {
+				login: '登录',
+				loggingIn: '登录中...',
+				usernamePlaceholder: '用户名',
+				passwordPlaceholder: '密码',
+				searchPlaceholder: '搜索...',
+				clear: '清除',
+				clearTagFilter: '清除标签筛选',
+				showAllNotes: '显示全部笔记',
+				refresh: '刷新',
+				toggleWaterfall: '切换瀑布流模式',
+				toggleWide: '切换宽屏模式',
+				moreOptions: '更多选项',
+				themeColor: '主题色',
+				logout: '退出登录',
+				getPublicLink: '获取公开链接',
+				languageLabel: '语言',
+				languageFollowSystem: '跟随系统',
+				languageChinese: '中文',
+				languageEnglish: 'English',
+				prevMonth: '上一月',
+				nextMonth: '下一月',
+				filterNotesFor: '筛选该时间范围的笔记',
+				videoFromNote: '来自笔记的视频',
+				close: '关闭',
+				notePlaceholder: '用 Markdown 书写...',
+				insertTag: '插入标签 (#)',
+				insertImage: '插入图片',
+				selectFiles: '选择文件',
+				fullscreenEditor: '全屏编辑',
+				togglePreview: '切换预览',
+				toggleSplit: '切换分屏',
+				searchOrSelectTag: '搜索或选择标签...',
+				save: '保存',
+				saving: '保存中...',
+				loading: '加载中...',
+				loadingMore: '正在加载更多...',
+				noMoreNotes: '没有更多笔记了。',
+				nothingHere: '这里还什么都没有。',
+				failedToLoadPrefix: '加载失败：',
+				pinned: '已置顶',
+				showMore: '展开更多',
+				collapse: '收起',
+				revoking: '撤销中...',
+				updating: '更新中...',
+				updated: '已更新！',
+				errored: '错误！',
+				copied: '已复制！',
+				copyCode: '复制代码',
+				copyFailed: '复制失败！',
+				lightMode: '浅色模式',
+				darkMode: '深色模式',
+				note: '条笔记',
+				notes: '条笔记'
+			},
+			messages: {
+				'Invalid username or password.': '用户名或密码错误。',
+				'Are you sure you want to delete this note?': '确定要删除这条笔记吗？',
+				'Are you sure you want to permanently delete this file? This action cannot be undone.': '确定要永久删除该文件？此操作无法撤销。',
+				'Are you sure you want to revoke the public links immediately? This action cannot be undone.': '确定立即撤销公开链接？此操作无法撤销。',
+				'Sharing has been successfully revoked.': '分享已成功撤销。',
+				'Failed to copy link.': '复制链接失败。',
+				'Content or a file is required.': '需要填写内容或上传文件。',
+				'Error: Original note element not found.': '错误：未找到原笔记元素。',
+				'A file is required for upload.': '请先选择文件再上传。',
+				'Upload failed': '上传失败',
+				'File deleted successfully.': '文件删除成功。',
+				'File and empty note removed.': '文件和空笔记已删除。',
+				'Notes merged successfully!': '笔记合并成功！'
+			},
+			textMap: {
+				'Login': '登录',
+				'Logging in...': '登录中...',
+				'Username': '用户名',
+				'Password': '密码',
+				'Days': '天数',
+				'Memos': '笔记',
+				'Tags': '标签',
+				'Timeline': '时间线',
+				'Tag': '标签',
+				'Search...': '搜索...',
+				'Clear': '清除',
+				'Show All Notes': '显示全部笔记',
+				'Interface Visibility': '界面显示',
+				'Show Search': '显示搜索',
+				'Show Stats': '显示统计',
+				'Show Calendar': '显示日历',
+				'Show Heatmap': '显示热力图',
+				'Show Tags': '显示标签',
+				'Show Timeline': '显示时间线',
+				'Show Right Sidebar': '显示右侧栏',
+				'Enable Date Grouping': '启用日期分组',
+				'Enable Content Truncation': '启用内容折叠',
+				'Feature Visibility': '功能显示',
+				'Show Favorites': '显示收藏',
+				'Show Archive': '显示归档',
+				'Enable Pinning': '启用置顶',
+				'Enable Sharing': '启用分享',
+				'Show Docs Link': '显示文档入口',
+				'Background': '背景',
+				'Image URL': '图片地址',
+				'Enter image URL...': '输入图片地址...',
+				'Or Upload': '或上传',
+				'Glass Effect': '磨砂效果',
+				'Background Opacity': '背景透明度',
+				'Restore': '恢复',
+				'Surface': '界面卡片',
+				'Base Color': '基础颜色',
+				'Opacity': '不透明度',
+				'Restore Defaults': '恢复默认',
+				'Image Paste Upload': '图片粘贴上传',
+				'Local (via Worker & R2)': '本地（通过 Worker 和 R2）',
+				'Imgur (Requires Client ID)': 'Imgur（需要 Client ID）',
+				'Imgur Client ID': 'Imgur Client ID',
+				'Enter your Imgur Client ID...': '输入 Imgur Client ID...',
+				'Telegram Proxy': 'Telegram 代理',
+				'Enable Video&File Proxy': '启用视频和文件代理',
+				'Waterfall Mode': '瀑布流模式',
+				'Hide Editor in Waterfall Mode': '瀑布流隐藏编辑器',
+				'Card Width (px)': '卡片宽度（px）',
+				'Share Memo': '分享笔记',
+				'Generating link...': '正在生成链接...',
+				'Anyone with these public links can view this memo.': '持有公开链接的任何人都可以查看该笔记。',
+				'Display Link': '展示链接',
+				'Copy': '复制',
+				'Raw Content Link': '原始内容链接',
+				'Expires in:': '有效期：',
+				'1 Hour': '1 小时',
+				'4 Hour': '4 小时',
+				'12 Hours': '12 小时',
+				'1 Day': '1 天',
+				'7 Days': '7 天',
+				'Never': '永久',
+				'──────────': '──────────',
+				'Revoke Now (Expire Immediately)': '立即撤销（马上失效）',
+				'Close': '关闭',
+				'Settings': '设置',
+				'Theme Color': '主题色',
+				'Logout': '退出登录',
+				'Write in Markdown...': '用 Markdown 书写...',
+				'Save': '保存',
+				'Refresh': '刷新',
+				'Toggle waterfall mode': '切换瀑布流模式',
+				'Toggle wide mode': '切换宽屏模式',
+				'More options': '更多选项',
+				'Custom': '自定义',
+				'Favorite': '收藏',
+				'Pin': '置顶',
+				'Archive': '归档',
+				'Share': '分享',
+				'Delete Note': '删除笔记',
+				'OK': '确认',
+				'Cancel': '取消',
+				'Delete': '删除',
+				'Merge': '合并',
+				'Add separator line (---) between notes': '合并时为笔记添加分隔线（---）',
+				'Files': '文件',
+				'✨ All': '✨ 全部',
+				'🏞️ Images': '🏞️ 图片',
+				'🎬 Videos': '🎬 视频',
+				'📄 Files': '📄 文件',
+				'Home': '主页',
+				'Favorites': '收藏',
+				'Archive': '归档',
+				'Docs': '文档',
+				'Attachments': '附件',
+				'Loading more...': '正在加载更多...',
+				'No more notes.': '没有更多笔记了。',
+				'Nothing here yet.': '这里还什么都没有。',
+				'Language': '语言',
+				'Follow system': '跟随系统',
+				'Failed to load attachments.': '附件加载失败。',
+				'No items to display.': '暂无可展示的内容。',
+				'Failed to initialize the application. Please check your connection and try again.': '初始化失败，请检查网络后重试。',
+				'Could not load activity data.': '无法加载活跃度数据。',
+				'Error loading timeline.': '时间线加载失败。',
+				'No tags yet.': '还没有标签。',
+				'Saving...': '保存中...',
+				'Pinned': '已置顶',
+				'Loading...': '加载中...',
+				'Collapse': '收起',
+				'Show more': '展开更多',
+				'Copied!': '已复制！',
+				'Updated!': '已更新！',
+				'Updating...': '更新中...',
+				'Revoking...': '撤销中...',
+				'Error!': '错误！'
+			}
+		}
+	};
+
+	const textNodeOriginals = new WeakMap();
+	let timelineDataCache = null;
+
+	const getLocale = () => currentLanguage === 'zh' ? 'zh-CN' : 'en-US';
+
+	function t(key) {
+		const lang = translations[currentLanguage] || translations.en;
+		return lang.strings?.[key] ?? translations.en.strings?.[key] ?? key;
+	}
+
+	function translateMessage(message) {
+		if (!message) return message;
+		const langMessages = translations[currentLanguage]?.messages || {};
+		const enMessages = translations.en.messages || {};
+		if (langMessages[message]) return langMessages[message];
+		if (enMessages[message]) return message;
+		const langText = translations[currentLanguage]?.textMap || {};
+		if (langText[message]) return langText[message];
+
+		if (message.startsWith('Error:')) {
+			return `${t('failedToLoadPrefix')} ${message.replace(/^Error:\s*/, '')}`;
+		}
+		if (message.startsWith('Failed to load:')) {
+			return `${t('failedToLoadPrefix')} ${message.replace(/^Failed to load:\s*/, '')}`;
+		}
+		if (message.startsWith('Update failed:')) {
+			return `${t('failedToLoadPrefix')} ${message.replace(/^Update failed:\s*/, '')}`;
+		}
+		if (message.startsWith('Upload Failed:')) {
+			return `${t('failedToLoadPrefix')} ${message.replace(/^Upload Failed:\s*/, '')}`;
+		}
+		return message;
+	}
+
+	function formatNoteCountLabel(count) {
+		const num = Number(count) || 0;
+		const key = num === 1 ? 'note' : 'notes';
+		return `${num} ${t(key)}`;
+	}
+
+	const attributeBindings = [
+		{ selector: '#username', attr: 'placeholder', key: 'usernamePlaceholder' },
+		{ selector: '#password', attr: 'placeholder', key: 'passwordPlaceholder' },
+		{ selector: '#login-btn', attr: 'text', key: 'login' },
+		{ selector: '#global-search-input', attr: 'placeholder', key: 'searchPlaceholder' },
+		{ selector: '#clear-search-btn', attr: 'title', key: 'clear' },
+		{ selector: '#clear-tags-filter-btn', attr: 'title', key: 'clearTagFilter' },
+		{ selector: '#clear-filter-btn', attr: 'title', key: 'showAllNotes' },
+		{ selector: '#note-input', attr: 'placeholder', key: 'notePlaceholder' },
+		{ selector: '#insert-tag-btn', attr: 'title', key: 'insertTag' },
+		{ selector: '#tag-search-input', attr: 'placeholder', key: 'searchOrSelectTag' },
+		{ selector: '#insert-image-btn', attr: 'title', key: 'insertImage' },
+		{ selector: '#select-files-btn', attr: 'title', key: 'selectFiles' },
+		{ selector: '#enter-fullscreen-btn', attr: 'title', key: 'fullscreenEditor' },
+		{ selector: '#main-preview-toggle-btn', attr: 'title', key: 'togglePreview' },
+		{ selector: '#main-split-toggle-btn', attr: 'title', key: 'toggleSplit' },
+		{ selector: '#refresh-btn', attr: 'title', key: 'refresh' },
+		{ selector: '#waterfall-toggle-btn', attr: 'title', key: 'toggleWaterfall' },
+		{ selector: '#wide-mode-toggle-btn', attr: 'title', key: 'toggleWide' },
+		{ selector: '#more-actions-btn', attr: 'title', key: 'moreOptions' },
+		{ selector: '#theme-color-btn', attr: 'title', key: 'themeColor' },
+		{ selector: '#share-link-close-btn', attr: 'text', key: 'close' }
+	];
+
+	function applyAttributeTranslations() {
+		attributeBindings.forEach(binding => {
+			const el = document.querySelector(binding.selector);
+			if (!el) return;
+			const value = t(binding.key);
+			if (binding.attr === 'text') {
+				el.textContent = value;
+			} else {
+				el.setAttribute(binding.attr, value);
+			}
+		});
+	}
+
+	function applyTextTranslations() {
+		const map = translations[currentLanguage]?.textMap || {};
+		const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+			acceptNode: node => {
+				if (!node || !node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_SKIP;
+				if (node.parentElement && node.parentElement.closest('script, style')) return NodeFilter.FILTER_REJECT;
+				return NodeFilter.FILTER_ACCEPT;
+			}
+		});
+		let node;
+		while ((node = walker.nextNode())) {
+			if (!textNodeOriginals.has(node)) {
+				textNodeOriginals.set(node, node.nodeValue);
+			}
+			const original = textNodeOriginals.get(node);
+			const key = original.trim();
+			const translated = map[key];
+			if (translated) {
+				node.nodeValue = original.replace(key, translated);
+			} else if (currentLanguage === 'en') {
+				node.nodeValue = original;
+			}
+		}
+	}
+
+	function renderThemeToggleLabel(theme) {
+		const btn = document.getElementById('theme-toggle-btn');
+		if (!btn) return;
+		const sunIcon = '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\">' +
+			'<path d=\"M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0s.39-1.02 0-1.41L5.99 4.58zm12.02 12.02c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0 .39-.39.39-1.02 0-1.41l-1.06-1.06zM20 6.01c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0l1.06-1.06zM7.05 18.01c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0l1.06-1.06z\">' +
+			'</path>' +
+			`</svg><span>${t('lightMode')}</span>`;
+		const moonIcon = '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"currentColor\"><path d=\"M10 2c-1.82 0-3.53.5-5 1.35C7.99 5.08 10 8.3 10 12s-2.01 6.92-5 8.65C6.47 21.5 8.18 22 10 22c5.52 0 10-4.48 10-10S15.52 2 10 2z\">' +
+			'</path></svg>' +
+			`<span>${t('darkMode')}</span>`;
+		btn.innerHTML = (theme === 'dark') ? sunIcon : moonIcon;
+	}
+
+	function renderLanguageOptions(selectEl) {
+		if (!selectEl) return;
+		const current = selectEl.value || languagePreference;
+		selectEl.innerHTML = `
+			<option value='zh'>${t('languageChinese')}</option>
+			<option value='en'>${t('languageEnglish')}</option>
+			<option value='system'>${t('languageFollowSystem')}</option>
+		`;
+		selectEl.value = current;
+	}
+
+	function applyTranslations() {
+		document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
+		applyAttributeTranslations();
+		applyTextTranslations();
+		if (languageSelect) {
+			languageSelect.setAttribute('aria-label', t('languageLabel'));
+			renderLanguageOptions(languageSelect);
+		}
+		if (settingsLanguageSelect) {
+			renderLanguageOptions(settingsLanguageSelect);
+			settingsLanguageSelect.setAttribute('aria-label', t('languageLabel'));
+		}
+		document.querySelectorAll('.copy-code-btn').forEach(btn => {
+			btn.title = t('copyCode');
+		});
+		renderThemeToggleLabel(document.body.dataset.theme || 'light');
+	}
+
+	function setLanguagePreference(pref) {
+		if (!supportedLanguages.includes(pref)) {
+			pref = 'system';
+		}
+		languagePreference = pref;
+		currentLanguage = resolveLanguage(pref);
+		localStorage.setItem(LANGUAGE_STORAGE_KEY, pref);
+		if (languageSelect && languageSelect.value !== pref) {
+			languageSelect.value = pref;
+		}
+		if (settingsLanguageSelect && settingsLanguageSelect.value !== pref) {
+			settingsLanguageSelect.value = pref;
+		}
+		applyTranslations();
+		if (typeof reRenderCachedNotes === 'function' && allNotesCache.length) {
+			reRenderCachedNotes();
+		}
+		if (timelineDataCache) {
+			loadAndRenderTimeline(timelineDataCache);
+		} else {
+			loadAndRenderTimeline();
+		}
+	}
+
+	if (languageSelect) {
+		languageSelect.value = languagePreference;
+		languageSelect.addEventListener('change', e => setLanguagePreference(e.target.value));
+	}
+	if (settingsLanguageSelect) {
+		settingsLanguageSelect.value = languagePreference;
+		settingsLanguageSelect.addEventListener('change', e => setLanguagePreference(e.target.value));
+	}
+
+	document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
+	window.addEventListener('DOMContentLoaded', applyTranslations);
 	// --- 配置 marked.js ---
 	const renderer = new marked.Renderer();
 	const NOTE_TRUNCATE_LENGTH = 800; // 笔记折叠的字数阈值
@@ -3829,13 +4334,12 @@
 			const year = this.currentDate.getFullYear();
 			const header = document.createElement('div');
 			header.className = 'calendar-header';
+			const locale = getLocale();
+			const monthYearLabel = new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(this.currentDate);
 			header.innerHTML = `
-                <button id='calendar-prev' class='calendar-nav-btn' title='Previous month'>◄</button>
-                <span id='calendar-month-year'>${this.currentDate.toLocaleString('en-US', {
-				month: 'long',
-				year: 'numeric'
-			})}</span>
-                <button id='calendar-next' class='calendar-nav-btn' title='Next month'>►</button>
+                <button id='calendar-prev' class='calendar-nav-btn' title='${t('prevMonth')}'>◄</button>
+                <span id='calendar-month-year'>${monthYearLabel}</span>
+                <button id='calendar-next' class='calendar-nav-btn' title='${t('nextMonth')}'>►</button>
             `;
 			this.container.appendChild(header);
 			const nextMonthBtn = document.getElementById('calendar-next');
@@ -3846,7 +4350,13 @@
 
 			const grid = document.createElement('div');
 			grid.className = 'calendar-grid';
-			const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+			const dayFormatter = new Intl.DateTimeFormat(locale, { weekday: 'short' });
+			const baseDate = new Date(2024, 0, 7); // Sunday
+			const dayNames = Array.from({ length: 7 }, (_, i) => {
+				const date = new Date(baseDate);
+				date.setDate(baseDate.getDate() + i);
+				return dayFormatter.format(date);
+			});
 			dayNames.forEach(name => {
 				const dayNameEl = document.createElement('div');
 				dayNameEl.className = 'calendar-day-name';
@@ -3913,8 +4423,8 @@
 					const dateStr = target.dataset.date;
 					const count = this.dataProvider.get(dateStr) || 0;
 					if (count > 0) {
-						const countText = count === 1 ? '1 note' : `${count} notes`;
-						calendarTooltip.textContent = `${countText} on ${dateStr}`;
+						const countText = formatNoteCountLabel(count);
+						calendarTooltip.textContent = `${countText} · ${dateStr}`;
 						calendarTooltip.style.display = 'block';
 					}
 				});
@@ -4117,15 +4627,15 @@
 				await navigator.clipboard.writeText(codeToCopy);
 				copyButton.innerHTML = successIcon;
 				copyButton.classList.add('copied');
-				copyButton.title = 'Copied!';
+				copyButton.title = t('copied');
 				setTimeout(() => {
 					copyButton.innerHTML = originalIcon;
 					copyButton.classList.remove('copied');
-					copyButton.title = 'Copy code';
+					copyButton.title = t('copyCode');
 				}, 2000);
 			} catch (err) {
 				console.error('Failed to copy text: ', err);
-				copyButton.title = 'Copy failed!';
+				copyButton.title = t('copyFailed');
 			}
 		}
 	});
@@ -4339,7 +4849,7 @@
 		if (selectedValue === 'revoke') {
 			const confirmed = await showCustomConfirm('Are you sure you want to revoke the public links immediately? This action cannot be undone.');
 			if (confirmed) {
-				expirationStatus.textContent = 'Revoking...';
+				expirationStatus.textContent = t('revoking');
 				expirationSelect.disabled = true;
 				try {
 					const response = await fetch(`/api/notes/${noteId}/share`, { method: 'DELETE' });
@@ -4351,7 +4861,7 @@
 					showCustomAlert('Sharing has been successfully revoked.', 'info');
 				} catch (error) {
 					showCustomAlert(`Error: ${error.message}`, 'error');
-					expirationStatus.textContent = 'Error!';
+					expirationStatus.textContent = t('errored');
 				} finally {
 					expirationSelect.disabled = false;
 				}
@@ -4364,7 +4874,7 @@
 
 		if (!noteId || !currentPublicId) return;
 
-		expirationStatus.textContent = 'Updating...';
+		expirationStatus.textContent = t('updating');
 		expirationSelect.disabled = true;
 
 		try {
@@ -4382,13 +4892,13 @@
 				throw new Error(err.error || 'Failed to update expiration.');
 			}
 
-			expirationStatus.textContent = 'Updated!';
+			expirationStatus.textContent = t('updated');
 			setTimeout(() => {
 				expirationStatus.textContent = '';
 			}, 2000);
 
 		} catch (error) {
-			expirationStatus.textContent = 'Error!';
+			expirationStatus.textContent = t('errored');
 			showCustomAlert(`Error: ${error.message}`, 'error');
 		} finally {
 			expirationSelect.disabled = false;
@@ -4414,7 +4924,7 @@
 		try {
 			await navigator.clipboard.writeText(inputElement.value);
 			const originalText = buttonElement.textContent;
-			buttonElement.textContent = 'Copied!';
+			buttonElement.textContent = t('copied');
 			setTimeout(() => {
 				buttonElement.textContent = originalText;
 			}, 2000);
@@ -4744,7 +5254,7 @@
 		attachmentsState.isLoading = true;
 		const loader = document.createElement('div');
 		loader.className = 'loading-indicator';
-		loader.textContent = 'Loading...';
+		loader.textContent = t('loading');
 		attachmentsContent.appendChild(loader);
 
 		if (isInitialLoad) {
@@ -4768,7 +5278,7 @@
 			attachmentsState.currentPage++;
 		} catch (error) {
 			console.error(error);
-			attachmentsContent.innerHTML = '<p>Failed to load attachments.</p>';
+			attachmentsContent.innerHTML = `<p>${translateMessage('Failed to load attachments.')}</p>`;
 		} finally {
 			attachmentsState.isLoading = false;
 			const existingLoader = attachmentsContent.querySelector('.loading-indicator');
@@ -4790,24 +5300,26 @@
 		});
 
 		if (isInitialLoad && filteredData.length === 0 && !attachmentsState.hasMore) {
-			attachmentsContent.innerHTML = '<p style="text-align: center; color: var(--text-secondary);">No items to display.</p>';
+			attachmentsContent.innerHTML = `<p style="text-align: center; color: var(--text-secondary);">${translateMessage('No items to display.')}</p>`;
 			return;
 		}
 
+		const locale = getLocale();
 		const groupedByMonth = attachmentsState.allData.reduce((acc, item) => {
 			const date = new Date(item.timestamp);
-			const monthKey = date.toLocaleString('en-US', { year: 'numeric', month: 'long' });
+			const monthKey = date.toLocaleString(locale, { year: 'numeric', month: 'long' });
 			if (!acc[monthKey]) acc[monthKey] = [];
 			acc[monthKey].push(item);
 			return acc;
 		}, {});
 
 		for (const monthKey in groupedByMonth) {
-			let monthGroupEl = document.getElementById(`month-${monthKey.replace(/\s/g, '-')}`);
+			const safeKey = monthKey.replace(/[^A-Za-z0-9_-]+/g, '-');
+			let monthGroupEl = document.getElementById(`month-${safeKey}`);
 			if (!monthGroupEl) {
 				monthGroupEl = document.createElement('div');
 				monthGroupEl.className = 'attachment-month-group';
-				monthGroupEl.id = `month-${monthKey.replace(/\s/g, '-')}`;
+				monthGroupEl.id = `month-${safeKey}`;
 				monthGroupEl.innerHTML = `<h4 class="month-header">${monthKey}</h4><div class="attachments-grid"></div>`;
 				attachmentsContent.appendChild(monthGroupEl);
 			}
@@ -4816,14 +5328,15 @@
 		// 只将新获取的数据项添加到对应的网格中
 		filteredData.forEach(item => {
 			const date = new Date(item.timestamp);
-			const monthKey = date.toLocaleString('en-US', { year: 'numeric', month: 'long' });
-			const gridEl = document.getElementById(`month-${monthKey.replace(/\s/g, '-')}`).querySelector('.attachments-grid');
+			const monthKey = date.toLocaleString(locale, { year: 'numeric', month: 'long' });
+			const safeKey = monthKey.replace(/[^A-Za-z0-9_-]+/g, '-');
+			const gridEl = document.getElementById(`month-${safeKey}`).querySelector('.attachments-grid');
 			const itemLink = document.createElement('a');
 			itemLink.dataset.noteId = item.noteId;
 			let shareButtonHTML = '', deleteButtonHTML = '';
 			if (item.type === 'file' && item.id) {
 				shareButtonHTML = `
-                <button class="share-file-btn icon-btn" title="Get public link" data-note-id="${item.noteId}" data-file-id="${item.id}">
+                <button class="share-file-btn icon-btn" title="${t('getPublicLink')}" data-note-id="${item.noteId}" data-file-id="${item.id}">
                     <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3s3-1.34 3-3-1.34-3-3-3z"/></svg>
                 </button>
             `;
@@ -4908,7 +5421,7 @@
 		} else if (videoContainer) {
 			const videoUrl = videoContainer.dataset.url;
 			const noteId = videoContainer.dataset.noteId;
-			openVideoPreview(videoUrl, `Video from note ${noteId}`);
+			openVideoPreview(videoUrl, `${t('videoFromNote')} ${noteId}`);
 		}
 
 		const shareBtn = e.target.closest('.share-file-btn');
@@ -4936,12 +5449,12 @@
 
 				shareBtn.innerHTML = successIcon;
 				shareBtn.classList.add('copied');
-				shareBtn.title = 'Copied!';
+				shareBtn.title = t('copied');
 
 				setTimeout(() => {
 					shareBtn.innerHTML = originalIcon;
 					shareBtn.classList.remove('copied');
-					shareBtn.title = 'Get public link';
+					shareBtn.title = t('getPublicLink');
 					shareBtn.disabled = false;
 				}, 2000);
 
@@ -5163,10 +5676,10 @@
 				// 处理加载更多的UI
 				if (!data.hasMore) {
 					if (allNotesCache.length > 0) {
-						scrollLoader.textContent = 'No more notes.';
+						scrollLoader.textContent = t('noMoreNotes');
 						scrollLoader.style.display = 'block';
 					} else {
-						notesContainer.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">Nothing here yet.</div>';
+						notesContainer.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">${t('nothingHere')}</div>`;
 						scrollLoader.style.display = 'none';
 					}
 				}
@@ -5179,7 +5692,7 @@
 			}
 		} catch (error) {
 			console.error('Initialization failed:', error);
-			document.body.innerHTML = 'Failed to initialize the application. Please check your connection and try again.';
+			document.body.innerHTML = translateMessage('Failed to initialize the application. Please check your connection and try again.');
 		} finally {
 			document.body.classList.remove('loading');
 			const initialLoader = document.getElementById('initial-loader');
@@ -5988,7 +6501,7 @@
 
 		} catch (error) {
 			console.error('Error loading heatmap:', error);
-			heatmapContainerWrapper.innerHTML = '<p style="font-size: 0.8rem; color: var(--text-secondary);">Could not load activity data.</p>';
+			heatmapContainerWrapper.innerHTML = `<p style="font-size: 0.8rem; color: var(--text-secondary);">${translateMessage('Could not load activity data.')}</p>`;
 		}
 	}
 
@@ -5997,10 +6510,13 @@
 		const dayElement = e.target.closest('.heatmap-day');
 		if (dayElement) {
 			const date = dayElement.dataset.date;
-			const count = dayElement.dataset.count;
-			const countText = count === '1' ? '1 note' : `${count} notes`;
-
-			heatmapTooltip.textContent = `${countText} on ${date}`;
+			const count = Number(dayElement.dataset.count || 0);
+			if (count > 0) {
+				const countText = formatNoteCountLabel(count);
+				heatmapTooltip.textContent = `${countText} · ${date}`;
+			} else {
+				heatmapTooltip.textContent = date;
+			}
 			heatmapTooltip.style.display = 'block';
 		}
 	});
@@ -6350,7 +6866,7 @@
 	fsSaveBtn.addEventListener('click', async () => {
 		const content = fsEditorTextarea.value;
 		fsSaveBtn.disabled = true;
-		fsSaveBtn.textContent = 'Saving...';
+		fsSaveBtn.textContent = t('saving');
 
 		try {
 			if (currentEditingNoteId === null) {
@@ -6360,7 +6876,7 @@
 					showCustomAlert('Content or a file is required.', 'error');
 					// 恢復按鈕狀態
 					fsSaveBtn.disabled = false;
-					fsSaveBtn.textContent = 'Save';
+					fsSaveBtn.textContent = t('save');
 					return; // 提前返回
 				}
 
@@ -6385,7 +6901,7 @@
 					showCustomAlert(error.message, 'error');
 				} finally {
 					fsSaveBtn.disabled = false;
-					fsSaveBtn.textContent = 'Save';
+					fsSaveBtn.textContent = t('save');
 				}
 
 			} else { // 编辑现有笔记
@@ -6396,7 +6912,7 @@
 				}
 
 				fsSaveBtn.disabled = true;
-				fsSaveBtn.textContent = 'Saving...';
+				fsSaveBtn.textContent = t('saving');
 				const formData = new FormData();
 				// 1. 添加从全屏编辑器获取的新内容
 				formData.append('content', content);
@@ -6425,14 +6941,14 @@
 					showCustomAlert(error.message, 'error');
 				} finally {
 					fsSaveBtn.disabled = false;
-					fsSaveBtn.textContent = 'Save';
+					fsSaveBtn.textContent = t('save');
 				}
 			}
 		} catch (error) {
 			showCustomAlert(error.message, 'error');
 		} finally {
 			fsSaveBtn.disabled = false;
-			fsSaveBtn.textContent = 'Save';
+			fsSaveBtn.textContent = t('save');
 		}
 	});
 
@@ -6516,7 +7032,7 @@
 
 		clearTimeout(toastTimer); // 如果已有提示，则重置计时器
 
-		toast.textContent = message;
+		toast.textContent = translateMessage(message);
 		toast.className = ''; // 重置类
 		toast.classList.add(`toast-${type}`);
 
@@ -6556,30 +7072,30 @@
 	});
 	function formatTimestamp(timestamp) {
 		if (!timestamp) return { relative: '', absolute: '' };
-		const date = new Date(timestamp);
-		const year = date.getFullYear();
-		const month = (date.getMonth() + 1).toString().padStart(2, '0');
-		const day = date.getDate().toString().padStart(2, '0');
-		const hours = date.getHours().toString().padStart(2, '0');
-		const minutes = date.getMinutes().toString().padStart(2, '0');
-		const seconds = date.getSeconds().toString().padStart(2, '0');
-		const absoluteTime = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
-		const now = Date.now();
-		const diffMs = now - timestamp;
-		const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-		if (diffMs < TWENTY_FOUR_HOURS_MS) {
-			const secondsAgo = Math.floor(diffMs / 1000);
-			if (secondsAgo < 60) {
-				return { relative: 'Just now', absolute: absoluteTime };
+		const date = new Date(Number(timestamp));
+		const locale = getLocale();
+		const absoluteTime = date.toLocaleString(locale, {
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit'
+		});
+		const diffMs = Date.now() - date.getTime();
+		const dayMs = 24 * 60 * 60 * 1000;
+		if (Math.abs(diffMs) < dayMs) {
+			const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+			const diffSeconds = Math.round(-diffMs / 1000);
+			if (Math.abs(diffSeconds) < 60) {
+				return { relative: rtf.format(diffSeconds, 'second'), absolute: absoluteTime };
 			}
-			const minutesAgo = Math.floor(secondsAgo / 60);
-			if (minutesAgo < 60) {
-				const relativeTime = `${minutesAgo} ${minutesAgo === 1 ? 'minute' : 'minutes'} ago`;
-				return { relative: relativeTime, absolute: absoluteTime };
+			const diffMinutes = Math.round(diffSeconds / 60);
+			if (Math.abs(diffMinutes) < 60) {
+				return { relative: rtf.format(diffMinutes, 'minute'), absolute: absoluteTime };
 			}
-			const hoursAgo = Math.floor(minutesAgo / 60);
-			const relativeTime = `${hoursAgo} ${hoursAgo === 1 ? 'hour' : 'hours'} ago`;
-			return { relative: relativeTime, absolute: absoluteTime };
+			const diffHours = Math.round(diffMinutes / 60);
+			return { relative: rtf.format(diffHours, 'hour'), absolute: absoluteTime };
 		}
 		return { relative: absoluteTime, absolute: absoluteTime };
 	}
@@ -6871,7 +7387,7 @@
 	};
 
 	function showCustomAlert(message, type = 'info') {
-		customAlertMessage.textContent = message;
+		customAlertMessage.textContent = translateMessage(message);
 		customAlertBox.dataset.type = type;
 		customConfirmBox.classList.remove('active');
 		customAlertBox.classList.add('active');
@@ -6881,7 +7397,7 @@
 
 	function showCustomConfirm(message) {
 		return new Promise(resolve => {
-			customConfirmMessage.textContent = message;
+			customConfirmMessage.textContent = translateMessage(message);
 			customAlertBox.classList.remove('active'); // Hide alert box if open
 			customConfirmBox.classList.add('active');
 			customModalOverlay.classList.add('visible');
@@ -7210,7 +7726,7 @@
 		const btn = document.getElementById('login-btn');
 		const err = document.getElementById('login-error');
 		btn.disabled = true;
-		btn.textContent = 'Logging in...';
+		btn.textContent = t('loggingIn');
 		err.textContent = '';
 		try {
 			const res = await fetch('/api/login', {
@@ -7221,10 +7737,10 @@
 			if (!res.ok) throw new Error('Invalid username or password.');
 			initializeApp();
 		} catch (error) {
-			err.textContent = error.message;
+			err.textContent = translateMessage(error.message);
 		} finally {
 			btn.disabled = false;
-			btn.textContent = 'Login';
+			btn.textContent = t('login');
 		}
 	});
 
@@ -7242,7 +7758,7 @@
 		const isAppending = page > 1;
 		const currentLoader = isAppending ? scrollLoader : refreshLoader;
 		if (isAppending) {
-			currentLoader.textContent = 'Loading more...';
+			currentLoader.textContent = t('loadingMore');
 		}
 		currentLoader.style.display = isAppending ? 'block' : 'flex';
 		try {
@@ -7289,15 +7805,15 @@
 				scrollLoader.style.display = 'none';
 			} else {
 				if (allNotesCache.length > 0) {
-					scrollLoader.textContent = 'No more notes.';
+					scrollLoader.textContent = t('noMoreNotes');
 					scrollLoader.style.display = 'block';
 				} else {
-					notesContainer.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">Nothing here yet.</div>';
+					notesContainer.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">${t('nothingHere')}</div>`;
 					scrollLoader.style.display = 'none';
 				}
 			}
 		} catch (error) {
-			currentLoader.textContent = `Failed to load: ${error.message}`;
+			currentLoader.textContent = translateMessage(`Failed to load: ${error.message}`);
 		} finally {
 			appState.pagination.isLoading = false;
 			refreshLoader.style.display = 'none';
@@ -7358,7 +7874,7 @@
 			note.files.forEach(file => {
 				const fileUrl = `/api/files/${noteId}/${file.id}`;
 				const shareButtonHTML = `
-            <button class="share-file-btn icon-btn" title="Get public link" data-note-id="${noteId}" data-file-id="${file.id}">
+            <button class="share-file-btn icon-btn" title="${t('getPublicLink')}" data-note-id="${noteId}" data-file-id="${file.id}">
                 <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3s3-1.34 3-3-1.34-3-3-3z"/></svg>
             </button>
         `;
@@ -7478,7 +7994,7 @@
 				// 为置顶区域添加一个标题/分隔符
 				const pinnedHeader = document.createElement('div');
 				pinnedHeader.className = 'pinned-section-header';
-				pinnedHeader.textContent = 'Pinned';
+				pinnedHeader.textContent = t('pinned');
 				pinnedContainer.appendChild(pinnedHeader);
 
 				// 循环渲染所有置顶笔记
@@ -7827,7 +8343,7 @@
 
 		const btn = e.target.querySelector('button[type="submit"]');
 		btn.disabled = true;
-		btn.textContent = 'Saving...';
+		btn.textContent = t('saving');
 
 		const formData = new FormData();
 		formData.append('content', noteInput.value);
@@ -7850,7 +8366,7 @@
 			showCustomAlert(error.message, 'error');
 		} finally {
 			btn.disabled = false;
-			btn.textContent = 'Save';
+			btn.textContent = t('save');
 		}
 	});
 
@@ -7934,9 +8450,9 @@
 			if (noteElement) {
 				noteElement.classList.toggle('is-expanded');
 				if (noteElement.classList.contains('is-expanded')) {
-					target.textContent = 'Collapse';
+					target.textContent = t('collapse');
 				} else {
-					target.textContent = 'Show more';
+					target.textContent = t('showMore');
 				}
 			}
 			return;
@@ -7966,12 +8482,12 @@
 
 				shareBtn.innerHTML = successIcon;
 				shareBtn.classList.add('copied');
-				shareBtn.title = 'Copied!';
+				shareBtn.title = t('copied');
 
 				setTimeout(() => {
 					shareBtn.innerHTML = originalIcon;
 					shareBtn.classList.remove('copied');
-					shareBtn.title = 'Get public link';
+					shareBtn.title = t('getPublicLink');
 					shareBtn.disabled = false;
 				}, 2000);
 
@@ -8354,15 +8870,20 @@
 		}
 	});
 
+
 	// 获取并渲染时间线和热力图
-	async function loadAndRenderTimeline() {
+	async function loadAndRenderTimeline(dataOverride = null) {
 		const timelineContainer = document.getElementById('timeline-container');
 		try {
-			const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-			const apiUrl = `/api/notes/timeline?timezone=${encodeURIComponent(userTimezone)}`;
-			const response = await fetch(apiUrl);
-			if (!response.ok) throw new Error('Failed to fetch timeline');
-			const timelineData = await response.json();
+			let timelineData = dataOverride;
+			if (!timelineData) {
+				const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+				const apiUrl = `/api/notes/timeline?timezone=${encodeURIComponent(userTimezone)}`;
+				const response = await fetch(apiUrl);
+				if (!response.ok) throw new Error('Failed to fetch timeline');
+				timelineData = await response.json();
+				timelineDataCache = timelineData;
+			}
 			loadAndRenderHeatmap(timelineData);
 
 			timelineContainer.innerHTML = '';
@@ -8404,7 +8925,7 @@
 
 		} catch (error) {
 			console.error('Error loading timeline:', error);
-			timelineContainer.innerHTML = '<p>Error loading timeline.</p>';
+			timelineContainer.innerHTML = `<p>${translateMessage('Error loading timeline.')}</p>`;
 		}
 	}
 
@@ -8424,7 +8945,7 @@
 		let filterButtonHtml = '';
 		if (isExpandable) {
 			filterButtonHtml = `
-                <button class='timeline-filter-btn' title='Filter notes for ${label}'>
+                <button class='timeline-filter-btn' title='${t('filterNotesFor')} ${label}'>
                     <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 4.5h18'/><path d='M3 9.5h18'/><path d='M3 14.5h18'/><path d='M3 19.5h18'/></svg>
                 </button>
             `;
@@ -8436,11 +8957,15 @@
                 ${label}
             </span>
             <div class='timeline-actions'>
-                <span class='timeline-count'>${count}</span>
+                <span class='timeline-count'></span>
                 ${filterButtonHtml}
             </div>
         `;
 		li.appendChild(itemDiv);
+		const countSpan = itemDiv.querySelector('.timeline-count');
+		if (countSpan) {
+			countSpan.textContent = formatNoteCountLabel(count);
+		}
 		return li;
 	}
 
@@ -8531,7 +9056,7 @@
 			const listElement = tagsContainer.querySelector('ul');
 
 			if (tags.length === 0) {
-				listElement.innerHTML = '<li><div class="tag-item-placeholder">No tags yet.</div></li>';
+				listElement.innerHTML = `<li><div class="tag-item-placeholder">${translateMessage('No tags yet.')}</div></li>`;
 				return;
 			}
 			tags.forEach(tag => {
@@ -8549,7 +9074,7 @@
 			});
 		} catch (error) {
 			console.error('Error loading tags:', error);
-			tagsContainer.innerHTML = '<p>Error loading tags.</p>';
+			tagsContainer.innerHTML = `<p>${translateMessage('Error loading tags.')}</p>`;
 		}
 	}
 

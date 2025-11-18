@@ -284,6 +284,7 @@ export async function handleNoteDetail(request, noteId, env) {
 
 export async function handleMergeNotes(request, env) {
 	const db = env.DB;
+	const bucket = env.NOTES_R2_BUCKET;
 	try {
 		const { sourceNoteId, targetNoteId, addSeparator } = await request.json();
 
@@ -300,12 +301,82 @@ export async function handleMergeNotes(request, env) {
 			return jsonResponse({ error: 'One or both notes not found.' }, 404);
 		}
 
+		// Helpers
+		const parseJsonArray = (value) => {
+			if (!value) return [];
+			if (Array.isArray(value)) return value;
+			if (typeof value === 'string') {
+				try { return JSON.parse(value); } catch (e) { return []; }
+			}
+			return [];
+		};
+		const replaceAll = (str, search, replacement) => {
+			if (!search || search === replacement) return str;
+			return str.split(search).join(replacement);
+		};
+		const movedFileIds = new Set();
+		const moveObjectIfExists = async (fileId) => {
+			if (!fileId) return false;
+			if (movedFileIds.has(fileId)) return true;
+			const oldKey = `${sourceNote.id}/${fileId}`;
+			const newKey = `${targetNote.id}/${fileId}`;
+			if (oldKey === newKey) return true;
+			const object = await bucket.get(oldKey);
+			if (!object) {
+				return false;
+			}
+			await bucket.put(newKey, object.body, { httpMetadata: object.httpMetadata });
+			await bucket.delete(oldKey);
+			movedFileIds.add(fileId);
+			return true;
+		};
+
+		const targetFiles = parseJsonArray(targetNote.files);
+		const sourceFiles = parseJsonArray(sourceNote.files);
+		const targetPics = parseJsonArray(targetNote.pics);
+		const sourcePics = parseJsonArray(sourceNote.pics);
+		const targetVideos = parseJsonArray(targetNote.videos);
+		const sourceVideos = parseJsonArray(sourceNote.videos);
+
 		// 目标笔记在前，源笔记在后
 		const separator = addSeparator ? '\n\n---\n\n' : '\n\n';
-		const mergedContent = targetNote.content + separator + sourceNote.content;
-		const targetFiles = JSON.parse(targetNote.files || '[]');
-		const sourceFiles = JSON.parse(sourceNote.files || '[]');
-		const mergedFiles = JSON.stringify([...targetFiles, ...sourceFiles]);
+		let mergedContent = targetNote.content + separator + sourceNote.content;
+
+		// Move source attachments to the target note and rewrite URLs in the merged content
+		for (const file of sourceFiles) {
+			const moved = await moveObjectIfExists(file.id);
+			if (moved) {
+				const oldUrl = `/api/files/${sourceNote.id}/${file.id}`;
+				const newUrl = `/api/files/${targetNote.id}/${file.id}`;
+				mergedContent = replaceAll(mergedContent, oldUrl, newUrl);
+			}
+		}
+		// Only keep source attachments that were successfully moved to the target note
+		const mergedFiles = [...targetFiles, ...sourceFiles.filter(file => movedFileIds.has(file.id))];
+
+		const rewriteInlineMedia = async (urls) => {
+			const rewritten = [];
+			for (const url of urls) {
+				let newUrl = url;
+				const match = url.match(/^\/api\/files\/(\d+)\/([a-zA-Z0-9-]+)$/);
+				if (match && match[1] === sourceNote.id.toString()) {
+					const fileId = match[2];
+					const moved = await moveObjectIfExists(fileId);
+					if (moved) {
+						newUrl = `/api/files/${targetNote.id}/${fileId}`;
+						mergedContent = replaceAll(mergedContent, url, newUrl);
+					}
+				}
+				rewritten.push(newUrl);
+			}
+			return rewritten;
+		};
+
+		const rewrittenPics = await rewriteInlineMedia(sourcePics);
+		const rewrittenVideos = await rewriteInlineMedia(sourceVideos);
+
+		const mergedPics = Array.from(new Set([...targetPics, ...rewrittenPics]));
+		const mergedVideos = Array.from(new Set([...targetVideos, ...rewrittenVideos]));
 
 		const mergedTimestamp = targetNote.updated_at;
 
@@ -313,9 +384,16 @@ export async function handleMergeNotes(request, env) {
 
 		// 更新目标笔记
 		const stmt = db.prepare(
-			"UPDATE notes SET content = ?, files = ?, updated_at = ? WHERE id = ?"
+			"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ?"
 		);
-		await stmt.bind(mergedContent, mergedFiles, mergedTimestamp, targetNote.id).run();
+		await stmt.bind(
+			mergedContent,
+			JSON.stringify(mergedFiles),
+			mergedTimestamp,
+			JSON.stringify(mergedPics),
+			JSON.stringify(mergedVideos),
+			targetNote.id
+		).run();
 
 		// 为更新后的目标笔记重新处理标签
 		await processNoteTags(db, targetNote.id, mergedContent);
@@ -323,24 +401,16 @@ export async function handleMergeNotes(request, env) {
 		// 删除源笔记
 		await db.prepare("DELETE FROM notes WHERE id = ?").bind(sourceNote.id).run();
 
-		// 将源笔记的文件移动到目标笔记的 R2 目录下
-		if (sourceFiles.length > 0) {
-			const r2 = env.NOTES_R2_BUCKET;
-			for (const file of sourceFiles) {
-				const oldKey = `${sourceNote.id}/${file.id}`;
-				const newKey = `${targetNote.id}/${file.id}`;
-				const object = await r2.get(oldKey);
-				if (object) {
-					await r2.put(newKey, object.body);
-					await r2.delete(oldKey);
-				}
-			}
-		}
-
 		// 返回更新后的目标笔记
 		const updatedMergedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(targetNote.id).first();
 		if (typeof updatedMergedNote.files === 'string') {
 			updatedMergedNote.files = JSON.parse(updatedMergedNote.files);
+		}
+		if (typeof updatedMergedNote.pics === 'string') {
+			try { updatedMergedNote.pics = JSON.parse(updatedMergedNote.pics); } catch (e) { /* keep raw */ }
+		}
+		if (typeof updatedMergedNote.videos === 'string') {
+			try { updatedMergedNote.videos = JSON.parse(updatedMergedNote.videos); } catch (e) { /* keep raw */ }
 		}
 
 		return jsonResponse(updatedMergedNote);

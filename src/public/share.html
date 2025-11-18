@@ -73,6 +73,24 @@
   .note-content video {
 	max-width: 100%; height: auto; display: block; margin-left: auto; margin-right: auto; margin-top: 0.5em; margin-bottom: 0.5em; border-radius: var(--border-radius-base);
   }
+  #language-switcher {
+	position: fixed;
+	top: 12px;
+	right: 12px;
+	z-index: 1000;
+	background: var(--surface-color);
+	border: 1px solid var(--border-color);
+	border-radius: .5rem;
+	padding: 6px 8px;
+	box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+  }
+  #language-switcher select {
+	border: none;
+	background: transparent;
+	color: var(--text-color);
+	font-size: 0.95rem;
+	outline: none;
+  }
   .attachments-grid { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color); }
   .attachment-link {
 	display: flex; flex-direction: column; justify-content: center; background-color: rgba(247, 250, 252, 0.8); padding: 0.5rem 1rem; border-radius: var(--border-radius-base); color: var(--text-color); text-decoration: none; font-size: 1rem; transition: background-color 0.2s; border: 1px solid var(--border-color); margin-bottom: 0.5rem;
@@ -85,7 +103,12 @@
 
 </style>
 <body>
-
+<div id='language-switcher'>
+	<select id='language-select' aria-label='Language'>
+		<option value='en'>English</option>
+		<option value='zh'>简体中文</option>
+	</select>
+</div>
 <div class="wrapper">
 	<header>
 		<h3><a href='https://github.com/souvenp/memos-worker' target="_blank">MEMOS</a></h3>
@@ -99,56 +122,160 @@
 </div>
 
 <script>
-	const themeToggleBtn = document.getElementById('theme-toggle-btn');
-	const mainContent = document.getElementById('main-content');
-	const loader = document.getElementById('loader');
+const shareSupportedLanguages = ['en', 'zh'];
+const shareTranslations = {
+	en: {
+		strings: {
+			title: 'Shared Memo',
+			toggleTheme: 'Toggle Theme',
+			missingId: 'No share ID found in URL parameters.',
+			failedToLoadNote: 'Failed to load note.',
+			errorPrefix: 'Error',
+			statusLabel: 'Status',
+			languageLabel: 'Language'
+		},
+		messages: {}
+	},
+	zh: {
+		strings: {
+			title: '公开笔记',
+			toggleTheme: '切换主题',
+			missingId: '未在链接中找到分享 ID。',
+			failedToLoadNote: '加载笔记失败。',
+			errorPrefix: '错误',
+			statusLabel: '状态',
+			languageLabel: '语言'
+		},
+		messages: {
+			'Failed to fetch': '网络请求失败。'
+		}
+	}
+};
+const LANGUAGE_STORAGE_KEY = 'memos-lang';
+let currentLanguage = (() => {
+	const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+	if (saved && shareSupportedLanguages.includes(saved)) return saved;
+	const navLang = (navigator.language || 'en').toLowerCase();
+	return navLang.startsWith('zh') ? 'zh' : 'en';
+})();
 
-	// --- Theme Logic ---
-	const applyTheme = (theme) => {
-		document.documentElement.dataset.theme = theme;
-		localStorage.setItem('share-theme', theme);
+const languageSelect = document.getElementById('language-select');
+const themeToggleBtn = document.getElementById('theme-toggle-btn');
+const mainContent = document.getElementById('main-content');
+const loader = document.getElementById('loader');
+const initialLoaderContent = loader ? loader.innerHTML : '';
+let loadedNoteData = null;
+
+function getLocale() {
+	return currentLanguage === 'zh' ? 'zh-CN' : 'en-US';
+}
+
+function t(key) {
+	const langData = shareTranslations[currentLanguage] || shareTranslations.en;
+	return langData.strings?.[key] ?? shareTranslations.en.strings?.[key] ?? key;
+}
+
+function translateMessage(message) {
+	if (!message) return message;
+	const langMessages = shareTranslations[currentLanguage]?.messages || {};
+	const enMessages = shareTranslations.en.messages || {};
+	if (langMessages[message]) return langMessages[message];
+	if (enMessages[message]) return message;
+	return message;
+}
+
+function applyTranslations() {
+	document.documentElement.lang = getLocale();
+	document.title = t('title');
+	if (languageSelect) {
+		languageSelect.value = currentLanguage;
+		languageSelect.setAttribute('aria-label', t('languageLabel'));
+	}
+	if (themeToggleBtn) {
+		themeToggleBtn.title = t('toggleTheme');
+	}
+}
+
+function setLanguage(lang) {
+	if (!shareSupportedLanguages.includes(lang)) {
+		lang = 'en';
+	}
+	currentLanguage = lang;
+	localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+	applyTranslations();
+	if (loadedNoteData) {
+		renderCurrentNote(loadedNoteData);
+	}
+}
+
+if (languageSelect) {
+	languageSelect.value = currentLanguage;
+	languageSelect.addEventListener('change', e => setLanguage(e.target.value));
+}
+
+applyTranslations();
+
+const applyTheme = (theme) => {
+	document.documentElement.dataset.theme = theme;
+	localStorage.setItem('share-theme', theme);
+	if (themeToggleBtn) {
 		themeToggleBtn.innerHTML = theme === 'dark'
 			? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24px" height="24px"><path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0s.39-1.02 0-1.41L5.99 4.58zm12.02 12.02c-.39-.39-1.02-.39-1.41 0-.39.39-.39 1.02 0 1.41l1.06 1.06c.39.39 1.02.39 1.41 0 .39-.39.39-1.02 0-1.41l-1.06-1.06zM20 6.01c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0l1.06-1.06zM7.05 18.01c.39-.39.39-1.02 0-1.41-.39-.39-1.02-.39-1.41 0l-1.06 1.06c-.39.39-.39 1.02 0 1.41s1.02.39 1.41 0l1.06-1.06z"></path></svg>`
 			: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="24px" height="24px"><path d="M10 2c-1.82 0-3.53.5-5 1.35C7.99 5.08 10 8.3 10 12s-2.01 6.92-5 8.65C6.47 21.5 8.18 22 10 22c5.52 0 10-4.48 10-10S15.52 2 10 2z"></path></svg>`;
-		document.getElementById('hljs-light-theme').disabled = (theme === 'dark');
-		document.getElementById('hljs-dark-theme').disabled = (theme !== 'dark');
-	};
+		themeToggleBtn.title = t('toggleTheme');
+	}
+	const lightTheme = document.getElementById('hljs-light-theme');
+	const darkTheme = document.getElementById('hljs-dark-theme');
+	if (lightTheme && darkTheme) {
+		lightTheme.disabled = (theme === 'dark');
+		darkTheme.disabled = (theme !== 'dark');
+	}
+};
+
+if (themeToggleBtn) {
 	themeToggleBtn.addEventListener('click', () => {
 		const newTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
 		applyTheme(newTheme);
 	});
-	const savedTheme = localStorage.getItem('share-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-	applyTheme(savedTheme);
+}
 
-	function formatTimestamp(timestamp) {
-		const date = new Date(timestamp);
-		return date.toLocaleString(undefined, {
-			year: 'numeric', month: 'short', day: 'numeric',
-			hour: 'numeric', minute: '2-digit'
-		});
-	}
-	const formatBytes = (b, d = 2) => {
-		if (!b || b === 0) return '0 Bytes';
-		const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(b) / Math.log(k));
-		return parseFloat((b / Math.pow(k, i)).toFixed(d)) + ' ' + s[i];
-	};
-	const textFileExtensions = ['txt', 'js', 'json', 'py', 'css', 'html', 'md', 'sh', 'java', 'c', 'cpp', 'go', 'rb', 'xml', 'log', 'yaml', 'toml', 'yml'];
+const savedTheme = localStorage.getItem('share-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+applyTheme(savedTheme);
 
-	function renderNote(note) {
-		const noteElement = document.createElement('div');
-		noteElement.className = 'note';
-		const time = formatTimestamp(note.updated_at);
+function formatTimestamp(timestamp) {
+	if (!timestamp) return '';
+	const date = new Date(Number(timestamp));
+	return date.toLocaleString(getLocale(), {
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit'
+	});
+}
 
-		let attachmentsHTML = '';
-		const files = note.files || [];
+const formatBytes = (b, d = 2) => {
+	if (!b || b === 0) return '0 Bytes';
+	const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
+	const i = Math.floor(Math.log(b) / Math.log(k));
+	return parseFloat((b / Math.pow(k, i)).toFixed(d)) + ' ' + s[i];
+};
 
-		if (files.length > 0) {
-			attachmentsHTML += '<div class="attachments-grid">';
-			files.forEach(file => {
-				// 后端现在会返回一个完整的、可直接使用的 public_url
-				if (file.public_url) {
-					attachmentsHTML += `
+const textFileExtensions = ['txt', 'js', 'json', 'py', 'css', 'html', 'md', 'sh', 'java', 'c', 'cpp', 'go', 'rb', 'xml', 'log', 'yaml', 'toml', 'yml'];
+
+function renderNote(note) {
+	const noteElement = document.createElement('div');
+	noteElement.className = 'note';
+	const time = formatTimestamp(note.updated_at);
+
+	let attachmentsHTML = '';
+	const files = note.files || [];
+
+	if (files.length > 0) {
+		attachmentsHTML += '<div class="attachments-grid">';
+		files.forEach(file => {
+			if (file.public_url) {
+				attachmentsHTML += `
                         <a href="${file.public_url}" class="attachment-link" download="${file.name}" data-filename="${file.name}">
                             <div class="file-info">
                                 <span class="file-name">${file.name}</span>
@@ -156,55 +283,89 @@
                             </div>
                         </a>
                     `;
-				}
-			});
-			attachmentsHTML += '</div>';
-		}
-
-		noteElement.innerHTML = `
-			<div class='note-header'>
-				<div class='note-meta'><span title='${new Date(note.updated_at).toISOString()}'>${time}</span></div>
-			</div>
-			<div class='note-content'>${marked.parse(note.content)}</div>
-            ${attachmentsHTML}
-		`;
-		return noteElement;
-	}
-
-	async function loadNote() {
-		try {
-			const urlParams = new URLSearchParams(window.location.search);
-			const publicId = urlParams.get('id');
-			if (!publicId) throw new Error("No share ID found in URL parameters.");
-
-			const response = await fetch(`/api/public/note/${publicId}`);
-			if (!response.ok) {
-				const err = await response.json();
-				throw new Error(err.error || `Failed to load note (status: ${response.status})`);
 			}
-			const noteData = await response.json();
-
-			loader.style.display = 'none';
-			mainContent.appendChild(renderNote(noteData));
-
-		} catch (error) {
-			console.error(error);
-			loader.innerHTML = `<p style="color: #e53e3e;">Error: ${error.message}</p>`;
-		}
+		});
+		attachmentsHTML += '</div>';
 	}
 
-	mainContent.addEventListener('contextmenu', e => {
-		const link = e.target.closest('.attachment-link');
-		if (!link) return;
-		const fileName = link.dataset.filename;
-		if (!fileName) return;
-		if (textFileExtensions.includes(fileName.split('.').pop().toLowerCase())) {
-			e.preventDefault();
-			window.open(`${link.href}?preview=true`, '_blank');
+	noteElement.innerHTML = `
+		<div class='note-header'>
+			<div class='note-meta'><span title='${new Date(note.updated_at).toISOString()}'>${time}</span></div>
+		</div>
+		<div class='note-content'>${marked.parse(note.content)}</div>
+            ${attachmentsHTML}
+	`;
+	return noteElement;
+}
+
+function renderCurrentNote(note) {
+	loadedNoteData = note;
+	if (loader) {
+		loader.style.display = 'none';
+	}
+	Array.from(mainContent.children).forEach(child => {
+		if (child !== loader) {
+			child.remove();
 		}
 	});
+	mainContent.appendChild(renderNote(note));
+}
 
-	loadNote();
+function showError(message) {
+	if (!loader) return;
+	Array.from(mainContent.children).forEach(child => {
+		if (child !== loader) {
+			child.remove();
+		}
+	});
+	loader.style.display = 'block';
+	loader.innerHTML = `<p style="color: #e53e3e;">${t('errorPrefix')}: ${message}</p>`;
+}
+
+async function loadNote() {
+	if (loader) {
+		loader.innerHTML = initialLoaderContent;
+		loader.style.display = 'block';
+	}
+	try {
+		const urlParams = new URLSearchParams(window.location.search);
+		const publicId = urlParams.get('id');
+		if (!publicId) {
+			showError(t('missingId'));
+			return;
+		}
+
+		const response = await fetch(`/api/public/note/${publicId}`);
+		if (!response.ok) {
+			let serverMessage = '';
+			try {
+				const err = await response.json();
+				serverMessage = err.error || '';
+			} catch (err) {
+				serverMessage = '';
+			}
+			throw new Error(serverMessage || t('failedToLoadNote'));
+		}
+		const noteData = await response.json();
+		renderCurrentNote(noteData);
+	} catch (error) {
+		console.error(error);
+		showError(translateMessage(error.message) || t('failedToLoadNote'));
+	}
+}
+
+mainContent.addEventListener('contextmenu', e => {
+	const link = e.target.closest('.attachment-link');
+	if (!link) return;
+	const fileName = link.dataset.filename;
+	if (!fileName) return;
+	if (textFileExtensions.includes(fileName.split('.').pop().toLowerCase())) {
+		e.preventDefault();
+		window.open(`${link.href}?preview=true`, '_blank');
+	}
+});
+
+loadNote();
 </script>
 
 </body>
