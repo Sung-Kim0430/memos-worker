@@ -1,0 +1,146 @@
+import { jsonResponse } from '../utils/response.js';
+
+export async function handleStandaloneImageUpload(request, env) {
+	try {
+		const formData = await request.formData();
+		const file = formData.get('file');
+
+		if (!file || !file.name || file.size === 0) {
+			return jsonResponse({ error: 'A file is required for upload.' }, 400);
+		}
+
+		const imageId = crypto.randomUUID();
+		// 我们将独立上传的图片统一放到一个 'uploads/' 目录下，与笔记附件分开
+		const r2Key = `uploads/${imageId}`;
+
+		// 将文件流上传到 R2
+		await env.NOTES_R2_BUCKET.put(r2Key, file.stream(), {
+			httpMetadata: { contentType: file.type },
+		});
+
+		// 返回一个可用于访问此图片的内部 URL
+		// 这个 URL 对应我们下面创建的 handleServeStandaloneImage 函数的路由
+		const imageUrl = `/api/images/${imageId}`;
+		return jsonResponse({ success: true, url: imageUrl });
+
+	} catch (e) {
+		console.error("Standalone Image Upload Error:", e.message);
+		return jsonResponse({ error: 'Upload failed', message: e.message }, 500);
+	}
+}
+
+export async function handleImgurProxyUpload(request, env) {
+	try {
+		const formData = await request.formData();
+		// 【注意】从前端获取 Client ID，而不是硬编码在后端
+		const clientId = formData.get('clientId');
+		if (!clientId) {
+			return jsonResponse({ error: 'Imgur Client ID is required.' }, 400);
+		}
+
+		// Imgur 需要 'image' 字段
+		const imageFile = formData.get('file');
+		const imgurFormData = new FormData();
+		imgurFormData.append('image', imageFile);
+
+		const imgurResponse = await fetch('https://api.imgur.com/3/image', {
+			method: 'POST',
+			headers: {
+				'Authorization': `Client-ID ${clientId}`,
+			},
+			body: imgurFormData,
+		});
+
+		if (!imgurResponse.ok) {
+			const errorBody = await imgurResponse.json();
+			throw new Error(`Imgur API responded with status ${imgurResponse.status}: ${errorBody.data.error}`);
+		}
+
+		const result = await imgurResponse.json();
+
+		if (!result.success) {
+			throw new Error('Imgur API returned a failure response.');
+		}
+
+		return jsonResponse({ success: true, url: result.data.link });
+
+	} catch (e) {
+		console.error("Imgur Proxy Error:", e.message);
+		return jsonResponse({ error: 'Imgur upload failed via proxy', message: e.message }, 500);
+	}
+}
+
+export async function handleGetAllAttachments(request, env) {
+	const db = env.DB;
+	const url = new URL(request.url);
+	const page = parseInt(url.searchParams.get('page') || '1');
+	const limit = 20; // 每次加载20条附件
+	const offset = (page - 1) * limit;
+
+	try {
+		// 使用 Common Table Expression (CTE) 和 UNION ALL 来构建一个高效的单一查询
+		const query = `
+            WITH combined_attachments AS (
+                SELECT
+                    n.id AS noteId, n.updated_at AS timestamp, 'image' AS type,
+                    json_each.value AS url, NULL AS name, NULL AS size, NULL AS id
+                FROM notes n, json_each(n.pics) AS json_each
+                WHERE json_valid(n.pics) AND json_array_length(n.pics) > 0
+
+                UNION ALL
+
+                SELECT
+                    n.id AS noteId, n.updated_at AS timestamp, 'video' AS type,
+                    json_each.value AS url, NULL AS name, NULL AS size, NULL AS id
+                FROM notes n, json_each(n.videos) AS json_each
+                WHERE json_valid(n.videos) AND json_array_length(n.videos) > 0
+
+                UNION ALL
+
+                SELECT
+                    n.id AS noteId, n.updated_at AS timestamp, 'file' AS type,
+                    NULL AS url, json_extract(json_each.value, '$.name') AS name,
+                    json_extract(json_each.value, '$.size') AS size,
+                    json_extract(json_each.value, '$.id') AS id
+                FROM notes n, json_each(n.files) AS json_each
+                WHERE json_valid(n.files) AND json_array_length(n.files) > 0
+            )
+            SELECT * FROM combined_attachments
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?;
+        `;
+
+		// 为了判断是否有更多页面，我们请求 limit + 1 条记录
+		const stmt = db.prepare(query);
+		const { results: attachmentsPlusOne } = await stmt.bind(limit + 1, offset).all();
+
+		const hasMore = attachmentsPlusOne.length > limit;
+		const attachments = attachmentsPlusOne.slice(0, limit);
+
+		return jsonResponse({
+			attachments: attachments,
+			hasMore: hasMore
+		});
+
+	} catch (e) {
+		console.error("Get All Attachments Error:", e.message);
+		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+	}
+}
+
+export async function handleServeStandaloneImage(imageId, env) {
+	const r2Key = `uploads/${imageId}`;
+	const object = await env.NOTES_R2_BUCKET.get(r2Key);
+
+	if (object === null) {
+		return new Response('File not found', { status: 404 });
+	}
+
+	const headers = new Headers();
+	object.writeHttpMetadata(headers);
+	headers.set('etag', object.httpEtag);
+	// 设置长时间的浏览器缓存，因为这些图片内容是不可变的
+	headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+	return new Response(object.body, { headers });
+}
