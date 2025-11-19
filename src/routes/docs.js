@@ -42,10 +42,16 @@ export async function handleDocsNodeUpdate(request, nodeId, env) {
 export async function handleDocsNodeCreate(request, env) {
 	try {
 		const { type, title, parent_id } = await request.json();
-		const stmt = env.DB.prepare("INSERT INTO nodes (type, title, parent_id, content, created_at, updated_at) VALUES (?, ?, ?, '', ?, ?) RETURNING id");
+
+		if (!type || !title || typeof type !== 'string' || typeof title !== 'string') {
+			return jsonResponse({ error: 'Both type and title are required.' }, 400);
+		}
+
+		const id = crypto.randomUUID();
 		const now = Date.now();
-		const { id } = await stmt.bind(type, title, parent_id, now, now).first();
-		return jsonResponse({ id });
+		const stmt = env.DB.prepare("INSERT INTO nodes (id, type, title, parent_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, '', ?, ?) RETURNING id");
+		const { id: insertedId } = await stmt.bind(id, type.trim(), title.trim(), parent_id, now, now).first();
+		return jsonResponse({ id: insertedId });
 	} catch (e) {
 		console.error("Docs Create Node Error:", e.message, e.cause);
 		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
@@ -68,14 +74,13 @@ async function getAllDescendantIds(db, parentId) {
 export async function handleDocsNodeDelete(request, nodeId, env) {
 	const db = env.DB;
 	try {
+		const existing = await db.prepare("SELECT id FROM nodes WHERE id = ?").bind(nodeId).first();
+		if (!existing) {
+			return jsonResponse({ error: 'Node not found' }, 404);
+		}
+
 		const descendantIds = await getAllDescendantIds(db, nodeId);
 		descendantIds.push(nodeId);
-
-		const deleteNotesStmt = db.prepare(`
-            DELETE FROM docs_notes
-            WHERE node_id IN (${descendantIds.map(() => '?').join(',')})
-        `);
-		await deleteNotesStmt.bind(...descendantIds).run();
 
 		const deleteNodesStmt = db.prepare(`
             DELETE FROM nodes
@@ -100,12 +105,27 @@ export async function handleDocsNodeMove(request, nodeId, env) {
 			return jsonResponse({ error: 'Node not found' }, 404);
 		}
 
-		if (!new_parent_id) {
-			return jsonResponse({ error: 'A new_parent_id must be provided for moving a node' }, 400);
+		if (new_parent_id === nodeId) {
+			return jsonResponse({ error: 'A node cannot be its own parent.' }, 400);
+		}
+
+		// Allow moving to the root by passing null/empty parent_id
+		let targetParent = null;
+		if (new_parent_id) {
+			targetParent = await db.prepare("SELECT id FROM nodes WHERE id = ?").bind(new_parent_id).first();
+			if (!targetParent) {
+				return jsonResponse({ error: 'Target parent not found' }, 404);
+			}
+
+			// Prevent creating cycles (cannot move under a descendant)
+			const descendantIds = await getAllDescendantIds(db, nodeId);
+			if (descendantIds.includes(new_parent_id)) {
+				return jsonResponse({ error: 'Cannot move a node under its descendant.' }, 400);
+			}
 		}
 
 		const stmt = db.prepare("UPDATE nodes SET parent_id = ?, updated_at = ? WHERE id = ?");
-		await stmt.bind(new_parent_id, Date.now(), nodeId).run();
+		await stmt.bind(new_parent_id || null, Date.now(), nodeId).run();
 
 		return jsonResponse({ success: true });
 	} catch (e) {

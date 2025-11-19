@@ -24,12 +24,20 @@ export async function handleSearchRequest(request, env) {
 	const startTimestamp = searchParams.get('startTimestamp');
 	const endTimestamp = searchParams.get('endTimestamp');
 	const isFavoritesMode = searchParams.get('favorites') === 'true';
+	const isArchivedMode = searchParams.get('archived') === 'true';
 
 	const db = env.DB;
 	try {
 		let whereClauses = ["notes_fts MATCH ?"];
 		let bindings = [query + '*'];
 		let joinClause = "";
+
+		if (isArchivedMode) {
+			whereClauses.push("n.is_archived = 1");
+		} else {
+			whereClauses.push("n.is_archived = 0");
+		}
+
 		if (isFavoritesMode) {
 			whereClauses.push("n.is_favorited = 1");
 		}
