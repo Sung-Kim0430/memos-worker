@@ -2,6 +2,8 @@ import { SESSION_COOKIE, SESSION_DURATION_SECONDS } from '../constants.js';
 import { jsonResponse } from '../utils/response.js';
 
 const PBKDF_ITERATIONS = 100000; // Workers 限制 100k 以内
+const LOGIN_RATE_LIMIT_MAX = 10; // 简单登录速率限制
+const LOGIN_RATE_LIMIT_WINDOW = 10 * 60; // 秒
 
 async function deriveKey(password, salt, iterations = PBKDF_ITERATIONS) {
 	const encoder = new TextEncoder();
@@ -47,9 +49,14 @@ async function getUserCount(env) {
 	return row?.count || 0;
 }
 
-async function ensureAdminUser(env) {
+	async function ensureAdminUser(env) {
 	if (!env.USERNAME || !env.PASSWORD) {
-		throw new Error("USERNAME/PASSWORD environment variables must be set for admin bootstrap.");
+		// 不再强制抛错：如果已有管理员用户则沿用，否则返回 null 让调用方决定提示
+		const existingAdmin = await env.DB.prepare("SELECT * FROM users WHERE is_admin = 1 LIMIT 1").first();
+		if (existingAdmin) {
+			return existingAdmin;
+		}
+		return null;
 	}
 	let admin = await getUserByUsername(env, env.USERNAME);
 	if (!admin) {
@@ -69,16 +76,58 @@ async function ensureAdminUser(env) {
 	return admin;
 }
 
+function getClientIp(request) {
+	return request.headers.get('cf-connecting-ip')
+		|| (request.headers.get('x-forwarded-for') || '').split(',')[0].trim()
+		|| '';
+}
+
+function isSecureRequest(request) {
+	const url = new URL(request.url);
+	const forwardedProto = request.headers.get('x-forwarded-proto')
+		|| request.headers.get('X-Forwarded-Proto')
+		|| request.headers.get('forwarded')?.match(/proto=([^;]+)/i)?.[1];
+	const proto = (forwardedProto || url.protocol || '').toLowerCase();
+	return proto.startsWith('https');
+}
+
+function parseSessionIdFromCookie(cookieHeader) {
+	if (!cookieHeader) return '';
+	const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
+	return match ? match[1] : '';
+}
+
+async function checkLoginRateLimit(env, request) {
+	const ip = getClientIp(request) || 'unknown';
+	const key = `login_attempts:${ip}`;
+	const record = await env.NOTES_KV.get(key, 'json');
+	if (record && record.count >= LOGIN_RATE_LIMIT_MAX) {
+		return { limited: true, remaining: 0 };
+	}
+	return { limited: false, remaining: LOGIN_RATE_LIMIT_MAX - (record?.count || 0) };
+}
+
+async function recordLoginFailure(env, request) {
+	const ip = getClientIp(request) || 'unknown';
+	const key = `login_attempts:${ip}`;
+	const now = Math.floor(Date.now() / 1000);
+	const record = await env.NOTES_KV.get(key, 'json');
+	const next = {
+		count: (record?.count || 0) + 1,
+		expires: now + LOGIN_RATE_LIMIT_WINDOW
+	};
+	await env.NOTES_KV.put(key, JSON.stringify(next), { expirationTtl: LOGIN_RATE_LIMIT_WINDOW });
+}
+
+async function clearLoginFailures(env, request) {
+	const ip = getClientIp(request) || 'unknown';
+	const key = `login_attempts:${ip}`;
+	await env.NOTES_KV.delete(key);
+}
+
 export async function isSessionAuthenticated(request, env) {
 	const cookieHeader = request.headers.get('Cookie');
-	if (!cookieHeader || !cookieHeader.includes(SESSION_COOKIE)) {
-		return null;
-	}
-	const cookies = cookieHeader.split(';').map(c => c.trim());
-	const sessionCookie = cookies.find(c => c.startsWith(`${SESSION_COOKIE}=`));
-	if (!sessionCookie) return null;
-	const eqIndex = sessionCookie.indexOf('=');
-	const sessionId = eqIndex >= 0 ? sessionCookie.substring(eqIndex + 1) : '';
+	const sessionId = parseSessionIdFromCookie(cookieHeader);
 	if (!sessionId) return null;
 	const session = await env.NOTES_KV.get(`session:${sessionId}`, 'json');
 	if (!session || !session.userId) {
@@ -99,6 +148,10 @@ export async function isSessionAuthenticated(request, env) {
 export async function handleLogin(request, env) {
 	try {
 		await ensureAdminUser(env);
+		const rate = await checkLoginRateLimit(env, request);
+		if (rate.limited) {
+			return jsonResponse({ error: 'Too many login attempts. Please try again later.' }, 429);
+		}
 		const { username, password } = await request.json();
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return jsonResponse({ error: 'Invalid credentials' }, 401);
@@ -110,12 +163,13 @@ export async function handleLogin(request, env) {
 			await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {
 				expirationTtl: SESSION_DURATION_SECONDS,
 			});
+			await clearLoginFailures(env, request);
 			const headers = new Headers();
-			const isSecure = new URL(request.url).protocol === 'https:';
-			const secureFlag = isSecure ? '; Secure' : '';
-			headers.append('Set-Cookie', `${SESSION_COOKIE}=${sessionId}; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=${SESSION_DURATION_SECONDS}`);
+			const secureFlag = isSecureRequest(request) ? '; Secure' : '';
+			headers.append('Set-Cookie', `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=${SESSION_DURATION_SECONDS}`);
 			return jsonResponse({ success: true, user: { id: user.id, username: user.username, isAdmin: !!user.is_admin } }, 200, headers);
 		}
+		await recordLoginFailure(env, request);
 	} catch (e) {
 		console.error("Login Error:", e.message);
 		return jsonResponse({ error: 'Server error during login', message: e.message }, 500);
@@ -136,8 +190,9 @@ export async function handleRegister(request, env, session) {
 	if (await getUserByUsername(env, username)) {
 		return jsonResponse({ error: 'Username already exists.' }, 400);
 	}
-	if (telegram_user_id) {
-		const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(telegram_user_id).first();
+	const tgId = telegram_user_id ? telegram_user_id.toString() : null;
+	if (tgId) {
+		const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(tgId).first();
 		if (dup) {
 			return jsonResponse({ error: 'Telegram user id already bound.' }, 400);
 		}
@@ -154,7 +209,7 @@ export async function handleRegister(request, env, session) {
 			hash,
 			salt,
 			isFirstUser ? 1 : (isAdmin && session?.isAdmin ? 1 : 0),
-			telegram_user_id || null,
+			tgId,
 			now
 		).run();
 		return jsonResponse({ success: true, userId });
@@ -198,14 +253,15 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		bindings.push(payload.username);
 	}
 	if (payload.hasOwnProperty('telegram_user_id')) {
-		if (payload.telegram_user_id) {
-			const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ? AND id != ?").bind(payload.telegram_user_id, targetUserId).first();
+		const tgId = payload.telegram_user_id ? payload.telegram_user_id.toString() : null;
+		if (tgId) {
+			const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ? AND id != ?").bind(tgId, targetUserId).first();
 			if (dup) {
 				return jsonResponse({ error: 'Telegram user id already bound.' }, 400);
 			}
 		}
 		updates.push("telegram_user_id = ?");
-		bindings.push(payload.telegram_user_id || null);
+		bindings.push(tgId);
 	}
 	if (payload.hasOwnProperty('is_admin')) {
 		const keepAdmin = payload.is_admin ? 1 : 0;
@@ -249,24 +305,32 @@ export async function handleUserDelete(env, targetUserId, session) {
 		}
 	}
 	const admin = await ensureAdminUser(env);
+	if (!admin) {
+		return jsonResponse({ error: 'Admin account missing, cannot transfer notes.' }, 500);
+	}
 	// 转移该用户的笔记给管理员
 	await env.DB.prepare("UPDATE notes SET owner_id = ? WHERE owner_id = ?").bind(admin.id, targetUserId).run();
 	await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(targetUserId).run();
+	// 清理该用户相关的会话
+	const list = await env.NOTES_KV.list({ prefix: 'session:' });
+	for (const item of list.keys) {
+		const payload = await env.NOTES_KV.get(item.name, 'json');
+		if (payload?.userId === targetUserId) {
+			await env.NOTES_KV.delete(item.name);
+		}
+	}
 	return jsonResponse({ success: true });
 }
 
 export async function handleLogout(request, env) {
 	const cookieHeader = request.headers.get('Cookie');
-	if (cookieHeader && cookieHeader.includes(SESSION_COOKIE)) {
-		const sessionId = cookieHeader.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1];
-		if (sessionId) {
-			await env.NOTES_KV.delete(`session:${sessionId}`);
-		}
+	const sessionId = parseSessionIdFromCookie(cookieHeader);
+	if (sessionId) {
+		await env.NOTES_KV.delete(`session:${sessionId}`);
 	}
 	const headers = new Headers();
-	const isSecure = new URL(request.url).protocol === 'https:';
-	const secureFlag = isSecure ? '; Secure' : '';
-	headers.append('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=0`);
+	const secureFlag = isSecureRequest(request) ? '; Secure' : '';
+	headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=0`);
 	return jsonResponse({ success: true }, 200, headers);
 }
 

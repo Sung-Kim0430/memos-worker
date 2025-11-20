@@ -79,42 +79,42 @@ async function handleAuthenticatedRoutes(pathname, request, env, session) {
 
 	if (pathname.startsWith('/api/docs')) {
 		if (pathname === '/api/docs/tree' && request.method === 'GET') {
-			return handleDocsTree(request, env);
+			return handleDocsTree(request, env, session);
 		}
 		if (pathname === '/api/docs/node' && request.method === 'POST') {
-			return handleDocsNodeCreate(request, env);
+			return handleDocsNodeCreate(request, env, session);
 		}
 
 		const renameMatch = pathname.match(/^\/api\/docs\/node\/([a-zA-Z0-9-]+)\/rename$/);
 		if (renameMatch && request.method === 'POST') {
 			const nodeId = renameMatch[1];
-			return handleDocsNodeRename(request, nodeId, env);
+			return handleDocsNodeRename(request, nodeId, env, session);
 		}
 
 		const nodeDetailMatch = pathname.match(/^\/api\/docs\/node\/([a-zA-Z0-9-]+)$/);
 		if (nodeDetailMatch) {
 			const nodeId = nodeDetailMatch[1];
 			if (request.method === 'GET') {
-				return handleDocsNodeGet(request, nodeId, env);
+				return handleDocsNodeGet(request, nodeId, env, session);
 			}
 			if (request.method === 'PUT') {
-				return handleDocsNodeUpdate(request, nodeId, env);
+				return handleDocsNodeUpdate(request, nodeId, env, session);
 			}
 			if (request.method === 'DELETE') {
-				return handleDocsNodeDelete(request, nodeId, env);
+				return handleDocsNodeDelete(request, nodeId, env, session);
 			}
 			if (request.method === 'PATCH') {
-				return handleDocsNodeMove(request, nodeId, env);
+				return handleDocsNodeMove(request, nodeId, env, session);
 			}
 		}
 	}
 
 	if (pathname === '/api/settings') {
 		if (request.method === 'GET') {
-			return handleGetSettings(request, env);
+			return handleGetSettings(request, env, session);
 		}
 		if (request.method === 'PUT') {
-			return handleSetSettings(request, env);
+			return handleSetSettings(request, env, session);
 		}
 	}
 

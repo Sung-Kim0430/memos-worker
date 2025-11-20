@@ -1,4 +1,4 @@
-import { NOTES_PER_PAGE } from '../constants.js';
+import { NOTES_PER_PAGE, MAX_TIME_RANGE_MS } from '../constants.js';
 import { jsonResponse } from '../utils/response.js';
 import { handleNotesList } from './notes.js';
 
@@ -37,7 +37,11 @@ export async function handleSearchRequest(request, env, session) {
 	}
 
 	// --- 引入分页逻辑 ---
-	const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1);
+	const pageRaw = searchParams.get('page') || '1';
+	const page = Number(pageRaw);
+	if (!Number.isInteger(page) || page <= 0) {
+		return jsonResponse({ error: 'Invalid page parameter' }, 400);
+	}
 	const offset = (page - 1) * NOTES_PER_PAGE;
 	const limit = NOTES_PER_PAGE;
 	const tagName = searchParams.get('tag');
@@ -64,11 +68,18 @@ export async function handleSearchRequest(request, env, session) {
 			whereClauses.push("n.is_favorited = 1");
 		}
 		if (startTimestamp && endTimestamp) {
-			const startMs = parseInt(startTimestamp);
-			const endMs = parseInt(endTimestamp);
-			if (!isNaN(startMs) && !isNaN(endMs)) {
+			const startMs = Number(startTimestamp);
+			const endMs = Number(endTimestamp);
+			const now = Date.now();
+			if (
+				Number.isFinite(startMs) && Number.isFinite(endMs) &&
+				startMs > 0 && endMs > 0 && startMs < endMs &&
+				endMs <= now + MAX_TIME_RANGE_MS
+			) {
 				whereClauses.push("n.updated_at >= ? AND n.updated_at < ?");
 				bindings.push(startMs, endMs);
+			} else {
+				return jsonResponse({ error: 'Invalid time range' }, 400);
 			}
 		}
 		if (tagName) {

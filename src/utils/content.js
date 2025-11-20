@@ -11,18 +11,14 @@ export function extractImageUrls(content) {
 	const matches = Array.from(content.matchAll(regex));
 
 	// 提取每个匹配项的第一个捕获组（也就是 URL）
-	const urls = matches.map(match => match[1]);
-
-	// 返回一个 JSON 字符串数组，以便直接存入 D1 的 TEXT 字段
-	return JSON.stringify(urls);
+	return matches.map(match => match[1]);
 }
 
 // 从 Markdown 中提取视频占位（目前用于 Telegram 视频的 [tg-video](url) 格式）
 export function extractVideoUrls(content) {
 	const regex = /\[tg-video\]\((.*?)\)/g;
 	const matches = Array.from(content.matchAll(regex));
-	const urls = matches.map(match => match[1]);
-	return JSON.stringify(urls);
+	return matches.map(match => match[1]);
 }
 
 /**

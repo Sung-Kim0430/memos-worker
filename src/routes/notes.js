@@ -1,4 +1,4 @@
-import { NOTES_PER_PAGE } from '../constants.js';
+import { NOTES_PER_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES } from '../constants.js';
 import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
 import { jsonResponse } from '../utils/response.js';
 import { processNoteTags } from '../utils/tags.js';
@@ -24,6 +24,27 @@ function canModifyNote(note, session) {
 	return !!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id));
 }
 
+function parsePositiveInt(value, fallback = 1) {
+	const num = Number(value);
+	if (!Number.isInteger(num) || num <= 0) {
+		return null;
+	}
+	return num;
+}
+
+function isValidTimestamp(value) {
+	const num = Number(value);
+	return Number.isFinite(num) && num > 0;
+}
+
+function safeParseJsonArray(value) {
+	if (Array.isArray(value)) return value;
+	if (value === null || value === undefined) return [];
+	if (typeof value === 'string') {
+		try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch (e) { return []; }
+	}
+	return [];
+}
 export async function handleNotesList(request, env, session) {
 	if (!session) {
 		return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -34,7 +55,11 @@ export async function handleNotesList(request, env, session) {
 		switch (request.method) {
 			case 'GET': {
 				const url = new URL(request.url);
-				const page = Math.max(1, parseInt(url.searchParams.get('page') || '1') || 1);
+				const pageParam = url.searchParams.get('page') || '1';
+				const page = parsePositiveInt(pageParam);
+				if (!page) {
+					return jsonResponse({ error: 'Invalid page parameter' }, 400);
+				}
 				const offset = (page - 1) * NOTES_PER_PAGE;
 				const limit = NOTES_PER_PAGE;
 
@@ -63,10 +88,15 @@ export async function handleNotesList(request, env, session) {
 					const endMs = Number(endTimestamp);
 
 					const now = Date.now();
-					const maxRange = 365 * 24 * 60 * 60 * 1000; // 1 年上限
-					if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs > 0 && endMs > 0 && startMs < endMs && endMs <= now + maxRange) {
+					if (
+						Number.isFinite(startMs) && Number.isFinite(endMs) &&
+						startMs > 0 && endMs > 0 && startMs < endMs &&
+						endMs <= now + MAX_TIME_RANGE_MS
+					) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");
 						bindings.push(startMs, endMs);
+					} else {
+						return jsonResponse({ error: 'Invalid time range' }, 400);
 					}
 				}
 				if (tagName) {
@@ -100,9 +130,9 @@ export async function handleNotesList(request, env, session) {
 				const notes = notesPlusOne.slice(0, limit);
 
 				notes.forEach(note => {
-					if (typeof note.files === 'string') {
-						try { note.files = JSON.parse(note.files); } catch (e) { note.files = []; }
-					}
+					note.files = safeParseJsonArray(note.files);
+					note.pics = safeParseJsonArray(note.pics);
+					note.videos = safeParseJsonArray(note.videos);
 				});
 
 				return jsonResponse({ notes, hasMore });
@@ -134,13 +164,25 @@ export async function handleNotesList(request, env, session) {
 					const ownerId = session?.id || null;
 					const allowedVisibility = ['private', 'users', 'public'];
 					const visibility = allowedVisibility.includes(requestedVisibility) ? requestedVisibility : 'private';
-					const { id: noteId } = await insertStmt.bind(content, "[]", now, now, picUrls, videoUrls, ownerId, visibility).first();
+					const { id: noteId } = await insertStmt.bind(
+						content,
+						"[]",
+						now,
+						now,
+						JSON.stringify(picUrls),
+						JSON.stringify(videoUrls),
+						ownerId,
+						visibility
+					).first();
 				if (!noteId) {
 					throw new Error("Failed to create note and get ID.");
 				}
 
 				// --- 【重要逻辑调整】现在上传的文件，只有非图片类型才算作 "附件" (files) ---
 				for (const file of files) {
+					if (file.size > MAX_UPLOAD_BYTES) {
+						return jsonResponse({ error: 'File too large.' }, 413);
+					}
 					// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
 					if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
 						const fileId = crypto.randomUUID();
@@ -160,6 +202,12 @@ export async function handleNotesList(request, env, session) {
 					const newNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(noteId).first();
 					if (typeof newNote.files === 'string') {
 						newNote.files = JSON.parse(newNote.files);
+					}
+					if (typeof newNote.pics === 'string') {
+						try { newNote.pics = JSON.parse(newNote.pics); } catch (e) { newNote.pics = []; }
+					}
+					if (typeof newNote.videos === 'string') {
+						try { newNote.videos = JSON.parse(newNote.videos); } catch (e) { newNote.videos = []; }
 					}
 					newNote.owner_id = ownerId;
 					newNote.visibility = visibility;
@@ -192,45 +240,24 @@ export async function handleNoteDetail(request, noteId, env, session) {
 		if (!existingNote.visibility) {
 			existingNote.visibility = 'private';
 		}
-		if (!existingNote.owner_id && session?.id) {
-			await db.prepare("UPDATE notes SET owner_id = ? WHERE id = ?").bind(session.id, id).run();
-			existingNote.owner_id = session.id;
-		}
 		if (!canAccessNoteRecord(existingNote, session)) {
 			return jsonResponse({ error: 'Forbidden' }, 403);
 		}
 		const canModify = canModifyNote(existingNote, session);
 		// 确保 files/pics/videos 字段是数组
-		try {
-			if (typeof existingNote.files === 'string') {
-				existingNote.files = JSON.parse(existingNote.files);
-			}
-		} catch (e) {
-			existingNote.files = [];
-		}
-		let existingPics = [];
-		if (Array.isArray(existingNote.pics)) {
-			existingPics = existingNote.pics;
-		} else if (typeof existingNote.pics === 'string') {
-			try { existingPics = JSON.parse(existingNote.pics); } catch (e) { existingPics = []; }
-		}
-		let existingVideos = [];
-		if (Array.isArray(existingNote.videos)) {
-			existingVideos = existingNote.videos;
-		} else if (typeof existingNote.videos === 'string') {
-			try { existingVideos = JSON.parse(existingNote.videos); } catch (e) { existingVideos = []; }
-		}
+		existingNote.files = safeParseJsonArray(existingNote.files);
+		const existingPics = safeParseJsonArray(existingNote.pics);
+		const existingVideos = safeParseJsonArray(existingNote.videos);
 
 		switch (request.method) {
 			case 'GET': {
 				// 返回当前笔记详情（解析后的附件/媒体字段）
-				const noteForClient = { ...existingNote };
-				if (typeof noteForClient.files === 'string') {
-					try { noteForClient.files = JSON.parse(noteForClient.files); } catch (e) { noteForClient.files = []; }
-				}
-				noteForClient.pics = existingPics;
-				noteForClient.videos = existingVideos;
-				return jsonResponse(noteForClient);
+				return jsonResponse({
+					...existingNote,
+					files: existingNote.files,
+					pics: existingPics,
+					videos: existingVideos
+				});
 			}
 
 			case 'PUT': {
@@ -242,11 +269,16 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 					if (formData.has('content')) {
 						const content = formData.get('content')?.toString() ?? existingNote.content;
-						let currentFiles = existingNote.files;
+						let currentFiles = Array.isArray(existingNote.files) ? [...existingNote.files] : [];
 
 						// --- 现在的文件处理只关心非图片附件 ---
 						// 处理附件删除 (逻辑不变，因为它操作的是 files 字段)
-						const filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
+						let filesToDelete = [];
+						try {
+							filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
+						} catch (e) {
+							return jsonResponse({ error: 'Invalid filesToDelete payload' }, 400);
+						}
 						if (filesToDelete.length > 0) {
 							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
 							await env.NOTES_R2_BUCKET.delete(r2KeysToDelete);
@@ -256,10 +288,8 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						// 解析新的图片/视频集合，用于后续更新及空内容判断
 						const picUrls = extractImageUrls(content);
 						const videoUrls = extractVideoUrls(content);
-						let nextPicList = [];
-						let nextVideoList = [];
-						try { nextPicList = JSON.parse(picUrls || '[]'); } catch (e) { nextPicList = []; }
-						try { nextVideoList = JSON.parse(videoUrls || '[]'); } catch (e) { nextVideoList = []; }
+						const nextPicList = Array.isArray(picUrls) ? picUrls : [];
+						const nextVideoList = Array.isArray(videoUrls) ? videoUrls : [];
 
 						// 在处理完文件删除后，检查笔记是否应该被删除
 						const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
@@ -310,6 +340,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					for (const file of newFiles) {
 						// 只有当文件存在，并且不是图片时，才作为附件处理
 						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
+							if (file.size > MAX_UPLOAD_BYTES) {
+								return jsonResponse({ error: 'File too large.' }, 413);
+							}
 							const fileId = crypto.randomUUID();
 							await env.NOTES_R2_BUCKET.put(`${id}/${fileId}`, file.stream());
 							currentFiles.push({ id: fileId, name: file.name, size: file.size, type: file.type });
@@ -322,7 +355,14 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						const stmt = db.prepare(
 							"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ?"
 						);
-						await stmt.bind(content, JSON.stringify(currentFiles), newTimestamp, picUrls, videoUrls, id).run();
+						await stmt.bind(
+							content,
+							JSON.stringify(currentFiles),
+							newTimestamp,
+							JSON.stringify(nextPicList),
+							JSON.stringify(nextVideoList),
+							id
+						).run();
 						await processNoteTags(db, id, content);
 				}
 
@@ -350,15 +390,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				}
 
 				const updatedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(id).first();
-				if (typeof updatedNote.files === 'string') {
-					updatedNote.files = JSON.parse(updatedNote.files);
-				}
-				if (typeof updatedNote.pics === 'string') {
-					try { updatedNote.pics = JSON.parse(updatedNote.pics); } catch (e) { /* ignore */ }
-				}
-				if (typeof updatedNote.videos === 'string') {
-					try { updatedNote.videos = JSON.parse(updatedNote.videos); } catch (e) { /* ignore */ }
-				}
+				updatedNote.files = safeParseJsonArray(updatedNote.files);
+				updatedNote.pics = safeParseJsonArray(updatedNote.pics);
+				updatedNote.videos = safeParseJsonArray(updatedNote.videos);
 				return jsonResponse(updatedNote);
 			}
 
@@ -403,6 +437,17 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 				if (allR2KeysToDelete.length > 0) {
 					await env.NOTES_R2_BUCKET.delete(allR2KeysToDelete);
+				} else {
+					// 防止元数据解析失败导致附件遗留，尽力清理该笔记下的全部对象
+					try {
+						const objects = await env.NOTES_R2_BUCKET.list({ prefix: `${id}/` });
+						const keys = (objects?.objects || []).map(obj => obj.key);
+						if (keys.length > 0) {
+							await env.NOTES_R2_BUCKET.delete(keys);
+						}
+					} catch (fallbackErr) {
+						console.error("Failed to list/delete orphaned R2 objects for note:", id, fallbackErr.message);
+					}
 				}
 
 				await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(id).run();
@@ -480,6 +525,15 @@ export async function handleMergeNotes(request, env, session) {
 			const oldKey = `${sourceNote.id}/${fileId}`;
 			const newKey = `${targetNote.id}/${fileId}`;
 			if (oldKey === newKey) return true;
+			try {
+				const destExists = await bucket.head(newKey);
+				if (destExists) {
+					movedFileIds.add(fileId);
+					return true;
+				}
+			} catch (e) {
+				// head 不支持时继续尝试移动
+			}
 			const object = await bucket.get(oldKey);
 			if (!object) {
 				return false;

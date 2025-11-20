@@ -1,7 +1,18 @@
 import { buildTree } from '../utils/content.js';
 import { jsonResponse } from '../utils/response.js';
 
-export async function handleDocsTree(request, env) {
+function requireAdmin(session) {
+	return !!session?.isAdmin;
+}
+
+function isUuid(id) {
+	return typeof id === 'string' && /^[0-9a-fA-F-]{8}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{4}-[0-9a-fA-F-]{12}$/.test(id);
+}
+
+export async function handleDocsTree(request, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
 	try {
 		const stmt = env.DB.prepare("SELECT id, type, title, parent_id FROM nodes ORDER BY title ASC");
 		const { results } = await stmt.all();
@@ -13,7 +24,13 @@ export async function handleDocsTree(request, env) {
 	}
 }
 
-export async function handleDocsNodeGet(request, nodeId, env) {
+export async function handleDocsNodeGet(request, nodeId, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
+	if (!isUuid(nodeId)) {
+		return jsonResponse({ error: 'Invalid node id' }, 400);
+	}
 	try {
 		const stmt = env.DB.prepare("SELECT id, type, title, content FROM nodes WHERE id = ?");
 		const node = await stmt.bind(nodeId).first();
@@ -27,7 +44,13 @@ export async function handleDocsNodeGet(request, nodeId, env) {
 	}
 }
 
-export async function handleDocsNodeUpdate(request, nodeId, env) {
+export async function handleDocsNodeUpdate(request, nodeId, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
+	if (!isUuid(nodeId)) {
+		return jsonResponse({ error: 'Invalid node id' }, 400);
+	}
 	try {
 		const { content } = await request.json();
 		const stmt = env.DB.prepare("UPDATE nodes SET content = ?, updated_at = ? WHERE id = ?");
@@ -39,15 +62,20 @@ export async function handleDocsNodeUpdate(request, nodeId, env) {
 	}
 }
 
-export async function handleDocsNodeCreate(request, env) {
+export async function handleDocsNodeCreate(request, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
 	try {
 		const { type, title, parent_id } = await request.json();
 
 		if (!type || !title || typeof type !== 'string' || typeof title !== 'string') {
 			return jsonResponse({ error: 'Both type and title are required.' }, 400);
 		}
-
 		if (parent_id) {
+			if (!isUuid(parent_id)) {
+				return jsonResponse({ error: 'Invalid parent id' }, 400);
+			}
 			const parent = await env.DB.prepare("SELECT id FROM nodes WHERE id = ?").bind(parent_id).first();
 			if (!parent) {
 				return jsonResponse({ error: 'Parent node does not exist.' }, 400);
@@ -78,7 +106,13 @@ async function getAllDescendantIds(db, parentId) {
 	return descendantIds;
 }
 
-export async function handleDocsNodeDelete(request, nodeId, env) {
+export async function handleDocsNodeDelete(request, nodeId, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
+	if (!isUuid(nodeId)) {
+		return jsonResponse({ error: 'Invalid node id' }, 400);
+	}
 	const db = env.DB;
 	try {
 		const existing = await db.prepare("SELECT id FROM nodes WHERE id = ?").bind(nodeId).first();
@@ -102,7 +136,13 @@ export async function handleDocsNodeDelete(request, nodeId, env) {
 	}
 }
 
-export async function handleDocsNodeMove(request, nodeId, env) {
+export async function handleDocsNodeMove(request, nodeId, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
+	if (!isUuid(nodeId)) {
+		return jsonResponse({ error: 'Invalid node id' }, 400);
+	}
 	const db = env.DB;
 	try {
 		const { new_parent_id } = await request.json();
@@ -119,6 +159,9 @@ export async function handleDocsNodeMove(request, nodeId, env) {
 		// Allow moving to the root by passing null/empty parent_id
 		let targetParent = null;
 		if (new_parent_id) {
+			if (!isUuid(new_parent_id)) {
+				return jsonResponse({ error: 'Invalid target parent id' }, 400);
+			}
 			targetParent = await db.prepare("SELECT id FROM nodes WHERE id = ?").bind(new_parent_id).first();
 			if (!targetParent) {
 				return jsonResponse({ error: 'Target parent not found' }, 404);
@@ -141,7 +184,13 @@ export async function handleDocsNodeMove(request, nodeId, env) {
 	}
 }
 
-export async function handleDocsNodeRename(request, nodeId, env) {
+export async function handleDocsNodeRename(request, nodeId, env, session) {
+	if (!requireAdmin(session)) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
+	if (!isUuid(nodeId)) {
+		return jsonResponse({ error: 'Invalid node id' }, 400);
+	}
 	const db = env.DB;
 	try {
 		const { new_title } = await request.json();

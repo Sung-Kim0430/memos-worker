@@ -1,4 +1,5 @@
 import { jsonResponse } from '../utils/response.js';
+import { MAX_UPLOAD_BYTES } from '../constants.js';
 
 export async function handleStandaloneImageUpload(request, env, session) {
 	if (!session) {
@@ -10,6 +11,9 @@ export async function handleStandaloneImageUpload(request, env, session) {
 
 		if (!file || !file.name || file.size === 0) {
 			return jsonResponse({ error: 'A file is required for upload.' }, 400);
+		}
+		if (file.size > MAX_UPLOAD_BYTES) {
+			return jsonResponse({ error: 'File too large.' }, 413);
 		}
 
 		const imageId = crypto.randomUUID();
@@ -35,14 +39,19 @@ export async function handleStandaloneImageUpload(request, env, session) {
 export async function handleImgurProxyUpload(request, env) {
 	try {
 		const formData = await request.formData();
-		// 【注意】从前端获取 Client ID，而不是硬编码在后端
-		const clientId = formData.get('clientId');
+		const clientId = env.IMGUR_CLIENT_ID;
 		if (!clientId) {
-			return jsonResponse({ error: 'Imgur Client ID is required.' }, 400);
+			return jsonResponse({ error: 'Imgur Client ID is not configured on server.' }, 500);
 		}
 
 		// Imgur 需要 'image' 字段
 		const imageFile = formData.get('file');
+		if (!imageFile || imageFile.size === 0) {
+			return jsonResponse({ error: 'A file is required for upload.' }, 400);
+		}
+		if (imageFile.size > MAX_UPLOAD_BYTES) {
+			return jsonResponse({ error: 'File too large.' }, 413);
+		}
 		const imgurFormData = new FormData();
 		imgurFormData.append('image', imageFile);
 
@@ -79,7 +88,11 @@ export async function handleGetAllAttachments(request, env, session) {
 	}
 	const db = env.DB;
 	const url = new URL(request.url);
-	const page = parseInt(url.searchParams.get('page') || '1');
+	const pageRaw = url.searchParams.get('page') || '1';
+	const page = Number(pageRaw);
+	if (!Number.isInteger(page) || page <= 0) {
+		return jsonResponse({ error: 'Invalid page parameter' }, 400);
+	}
 	const limit = 20; // 每次加载20条附件
 	const offset = (page - 1) * limit;
 

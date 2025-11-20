@@ -33,11 +33,16 @@ export async function handleFileRequest(noteId, fileId, request, env, session) {
 	}
 
 	let files = [];
-	if (note && typeof note.files === 'string') {
+	if (note) {
 		try {
-			files = JSON.parse(note.files);
+			if (typeof note.files === 'string') {
+				files = JSON.parse(note.files);
+			} else if (Array.isArray(note.files)) {
+				files = note.files;
+			}
 		} catch (e) {
-			// JSON 解析失败则忽略
+			console.error("Failed to parse files metadata for note:", id, e.message);
+			files = [];
 		}
 	}
 

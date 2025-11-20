@@ -7,10 +7,11 @@ function parseAuthorizedIds(raw) {
 }
 
 async function resolveTelegramUser(env, telegramUserId) {
+	telegramUserId = telegramUserId?.toString() || null;
 	if (!telegramUserId) {
 		return ensureAdminUser(env);
 	}
-	const existing = await env.DB.prepare("SELECT * FROM users WHERE telegram_user_id = ?").bind(telegramUserId.toString()).first();
+	const existing = await env.DB.prepare("SELECT * FROM users WHERE telegram_user_id = ?").bind(telegramUserId).first();
 	if (existing) return existing;
 	try {
 		return await ensureAdminUser(env);
@@ -311,7 +312,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 				// --- 代理模式 ---
 				// 只存储 file_id, 不拉取文件内容
 				filesMeta.push({
-					id: document.file_id, // 供前端使用
+					id: crypto.randomUUID(),
 					type: 'telegram_document', // 特殊类型标记
 					file_id: document.file_id,
 					mime_type: document.mime_type || 'application/octet-stream',

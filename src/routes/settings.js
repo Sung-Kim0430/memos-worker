@@ -1,6 +1,9 @@
 import { jsonResponse } from '../utils/response.js';
 
-export async function handleGetSettings(request, env) {
+export async function handleGetSettings(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const defaultSettings = {
 		showSearchBar: true,
 		showStatsCard: true,
@@ -39,7 +42,10 @@ export async function handleGetSettings(request, env) {
 	return jsonResponse({ ...defaultSettings, ...savedSettings });
 }
 
-export async function handleSetSettings(request, env) {
+export async function handleSetSettings(request, env, session) {
+	if (!session?.isAdmin) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
 	try {
 		const settingsToSave = await request.json();
 		await env.NOTES_KV.put('user_settings', JSON.stringify(settingsToSave));

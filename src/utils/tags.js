@@ -1,5 +1,9 @@
 export async function processNoteTags(db, noteId, content) {
-	const plainTextContent = content.replace(/<[^>]*>/g, '');
+	// 先移除代码块（```...``` 和行内 `...`）避免误识别标签
+	const withoutCodeBlocks = content
+		.replace(/```[\s\S]*?```/g, '')
+		.replace(/`[^`]*`/g, '');
+	const plainTextContent = withoutCodeBlocks.replace(/<[^>]*>/g, '');
 	// 1. 定义两个正则表达式：一个用于标签，一个用于 URL
 	const tagRegex = /#([\p{L}\p{N}_-]+)/gu;
 	const urlRegex = /(https?:\/\/[^\s"']*[^\s"'.?,!])/g;

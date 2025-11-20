@@ -44,6 +44,13 @@ async function cleanupPublicFilesForShare(env, shareId) {
 	}
 }
 
+function sanitizeContent(content = '') {
+	return content
+		.replace(/<script/gi, '&lt;script')
+		.replace(/<\/script>/gi, '&lt;/script&gt;')
+		.replace(/on\w+\s*=/gi, 'x-on-removed=');
+}
+
 export async function handleShareFileRequest(noteId, fileId, request, env, session) {
 	if (!session) {
 		return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -197,6 +204,10 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 
 		// --- 如果提供了 publicId 和新的 expirationTtl，则更新原有链接 ---
 		if (body.publicId) {
+			const currentPublicId = await env.NOTES_KV.get(noteShareKey);
+			if (!currentPublicId || currentPublicId !== body.publicId) {
+				return jsonResponse({ error: 'Shared memo not found. Cannot update expiration.' }, 404);
+			}
 			const memoData = await env.NOTES_KV.get(publicMemoKey);
 			if (!memoData) {
 				return jsonResponse({ error: 'Shared memo not found. Cannot update expiration.' }, 404);
@@ -324,10 +335,9 @@ export async function handlePublicNoteRequest(publicId, env) {
 			for (const match of matches) {
 				const privateUrl = match[0];
 				const publicUrl = await createPublicUrlFor(privateUrl);
-				const escaped = privateUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-				processedContent = processedContent.replace(new RegExp(escaped, 'g'), publicUrl);
+				processedContent = processedContent.replace(privateUrl, publicUrl);
 			}
-		note.content = processedContent;
+		note.content = sanitizeContent(processedContent);
 
 		// 2. 处理 `files` 附件列表
 		let files = [];
