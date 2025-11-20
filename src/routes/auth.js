@@ -1,7 +1,9 @@
 import { SESSION_COOKIE, SESSION_DURATION_SECONDS } from '../constants.js';
 import { jsonResponse } from '../utils/response.js';
 
-async function deriveKey(password, salt) {
+const PBKDF_ITERATIONS = 100000; // Workers 限制 100k 以内
+
+async function deriveKey(password, salt, iterations = PBKDF_ITERATIONS) {
 	const encoder = new TextEncoder();
 	const keyMaterial = await crypto.subtle.importKey(
 		'raw',
@@ -11,7 +13,7 @@ async function deriveKey(password, salt) {
 		['deriveBits']
 	);
 	const bits = await crypto.subtle.deriveBits(
-		{ name: 'PBKDF2', salt: encoder.encode(salt), iterations: 150000, hash: 'SHA-256' },
+		{ name: 'PBKDF2', salt: encoder.encode(salt), iterations, hash: 'SHA-256' },
 		keyMaterial,
 		256
 	);

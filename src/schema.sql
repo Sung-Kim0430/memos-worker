@@ -1,4 +1,9 @@
-CREATE TABLE users (
+-- 幂等初始化脚本，可重复执行
+DROP TRIGGER IF EXISTS notes_after_insert;
+DROP TRIGGER IF EXISTS notes_after_delete;
+DROP TRIGGER IF EXISTS notes_after_update;
+
+CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
@@ -8,12 +13,12 @@ CREATE TABLE users (
   created_at INTEGER NOT NULL
 );
 
-CREATE TABLE tags (
+CREATE TABLE IF NOT EXISTS tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE notes (
+CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY,
   content TEXT NOT NULL,
   files TEXT DEFAULT '[]',
@@ -29,7 +34,7 @@ CREATE TABLE notes (
   FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
-CREATE TABLE note_tags (
+CREATE TABLE IF NOT EXISTS note_tags (
   note_id INTEGER NOT NULL,
   tag_id INTEGER NOT NULL,
   PRIMARY KEY (note_id, tag_id),
@@ -38,7 +43,7 @@ CREATE TABLE note_tags (
 );
 
 
-CREATE TABLE nodes (
+CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -53,7 +58,7 @@ CREATE TABLE nodes (
 -- (This is the only FTS-related statement you need)
 -- =============================================
 --
-CREATE VIRTUAL TABLE notes_fts USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   content,
   content='notes',
   content_rowid='id'
@@ -64,15 +69,15 @@ CREATE VIRTUAL TABLE notes_fts USING fts5(
 -- Section 3: Triggers to keep FTS in sync
 -- =============================================
 
-CREATE TRIGGER notes_after_insert AFTER INSERT ON notes BEGIN
+CREATE TRIGGER IF NOT EXISTS notes_after_insert AFTER INSERT ON notes BEGIN
   INSERT INTO notes_fts(rowid, content) VALUES (new.id, new.content);
 END;
 
-CREATE TRIGGER notes_after_delete AFTER DELETE ON notes BEGIN
+CREATE TRIGGER IF NOT EXISTS notes_after_delete AFTER DELETE ON notes BEGIN
   INSERT INTO notes_fts(notes_fts, rowid, content) VALUES ('delete', old.id, old.content);
 END;
 
-CREATE TRIGGER notes_after_update AFTER UPDATE ON notes BEGIN
+CREATE TRIGGER IF NOT EXISTS notes_after_update AFTER UPDATE ON notes BEGIN
   INSERT INTO notes_fts(notes_fts, rowid, content) VALUES ('delete', old.id, old.content);
   INSERT INTO notes_fts(rowid, content) VALUES (new.id, new.content);
 END;
