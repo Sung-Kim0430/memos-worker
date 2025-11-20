@@ -186,7 +186,12 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		}
 		// 1) 检查 request body 中是否有 "expirationTtl" 字段
 		const bodyText = await request.text();
-		const body = bodyText ? JSON.parse(bodyText) : {};
+		let body = {};
+		try {
+			body = bodyText ? JSON.parse(bodyText) : {};
+		} catch (e) {
+			return jsonResponse({ error: 'Invalid JSON body' }, 400);
+		}
 		const noteShareKey = `note_share:${noteId}`;
 		const publicMemoKey = `public_memo:${body.publicId}`;
 
@@ -195,6 +200,11 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 			const memoData = await env.NOTES_KV.get(publicMemoKey);
 			if (!memoData) {
 				return jsonResponse({ error: 'Shared memo not found. Cannot update expiration.' }, 404);
+			}
+
+			// 确保请求显式提供有效 TTL；否则保持原样
+			if (typeof body.expirationTtl !== 'number' || body.expirationTtl < 0) {
+				return jsonResponse({ error: 'expirationTtl is required and must be >= 0' }, 400);
 			}
 
 			const options = {};

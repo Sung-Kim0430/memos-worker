@@ -281,7 +281,24 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							if (allR2Keys.length > 0) {
 								await env.NOTES_R2_BUCKET.delete(allR2Keys);
 							}
-							// 2. 从数据库删除笔记
+							// 2. 删除分享 KV 和标签、笔记
+							await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(id).run();
+							const publicId = await env.NOTES_KV.get(`note_share:${id}`);
+							if (publicId) {
+								await env.NOTES_KV.delete(`public_memo:${publicId}`);
+								await env.NOTES_KV.delete(`note_share:${id}`);
+								const prefix = `public_file_cache:${publicId}:`;
+								const list = await env.NOTES_KV.list({ prefix });
+								for (const { name } of list.keys) {
+									const filePublicId = await env.NOTES_KV.get(name);
+									if (filePublicId) {
+										await env.NOTES_KV.delete(`public_file:${filePublicId}`);
+									}
+									await env.NOTES_KV.delete(name);
+								}
+							} else {
+								await env.NOTES_KV.delete(`note_share:${id}`);
+							}
 							await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
 							// 3. 返回特殊标记，告知前端整个笔记已被删除
 							return jsonResponse({ success: true, noteDeleted: true });
@@ -384,6 +401,24 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 				if (allR2KeysToDelete.length > 0) {
 					await env.NOTES_R2_BUCKET.delete(allR2KeysToDelete);
+				}
+
+				await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(id).run();
+				const publicId = await env.NOTES_KV.get(`note_share:${id}`);
+				if (publicId) {
+					await env.NOTES_KV.delete(`public_memo:${publicId}`);
+					await env.NOTES_KV.delete(`note_share:${id}`);
+					const prefix = `public_file_cache:${publicId}:`;
+					const list = await env.NOTES_KV.list({ prefix });
+					for (const { name } of list.keys) {
+						const filePublicId = await env.NOTES_KV.get(name);
+						if (filePublicId) {
+							await env.NOTES_KV.delete(`public_file:${filePublicId}`);
+						}
+						await env.NOTES_KV.delete(name);
+					}
+				} else {
+					await env.NOTES_KV.delete(`note_share:${id}`);
 				}
 
 				await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
