@@ -34,7 +34,7 @@ export async function handleNotesList(request, env, session) {
 		switch (request.method) {
 			case 'GET': {
 				const url = new URL(request.url);
-				const page = parseInt(url.searchParams.get('page') || '1');
+				const page = Math.max(1, parseInt(url.searchParams.get('page') || '1') || 1);
 				const offset = (page - 1) * NOTES_PER_PAGE;
 				const limit = NOTES_PER_PAGE;
 
@@ -62,7 +62,9 @@ export async function handleNotesList(request, env, session) {
 					const startMs = Number(startTimestamp);
 					const endMs = Number(endTimestamp);
 
-					if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs > 0 && endMs > 0 && startMs < endMs) {
+					const now = Date.now();
+					const maxRange = 365 * 24 * 60 * 60 * 1000; // 1 年上限
+					if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs > 0 && endMs > 0 && startMs < endMs && endMs <= now + maxRange) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");
 						bindings.push(startMs, endMs);
 					}

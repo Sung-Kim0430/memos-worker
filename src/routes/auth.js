@@ -77,7 +77,8 @@ export async function isSessionAuthenticated(request, env) {
 	const cookies = cookieHeader.split(';').map(c => c.trim());
 	const sessionCookie = cookies.find(c => c.startsWith(`${SESSION_COOKIE}=`));
 	if (!sessionCookie) return null;
-	const sessionId = sessionCookie.split('=')[1];
+	const eqIndex = sessionCookie.indexOf('=');
+	const sessionId = eqIndex >= 0 ? sessionCookie.substring(eqIndex + 1) : '';
 	if (!sessionId) return null;
 	const session = await env.NOTES_KV.get(`session:${sessionId}`, 'json');
 	if (!session || !session.userId) {
@@ -110,7 +111,9 @@ export async function handleLogin(request, env) {
 				expirationTtl: SESSION_DURATION_SECONDS,
 			});
 			const headers = new Headers();
-			headers.append('Set-Cookie', `${SESSION_COOKIE}=${sessionId}; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_DURATION_SECONDS}`);
+			const isSecure = new URL(request.url).protocol === 'https:';
+			const secureFlag = isSecure ? '; Secure' : '';
+			headers.append('Set-Cookie', `${SESSION_COOKIE}=${sessionId}; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=${SESSION_DURATION_SECONDS}`);
 			return jsonResponse({ success: true, user: { id: user.id, username: user.username, isAdmin: !!user.is_admin } }, 200, headers);
 		}
 	} catch (e) {
@@ -261,7 +264,9 @@ export async function handleLogout(request, env) {
 		}
 	}
 	const headers = new Headers();
-	headers.append('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+	const isSecure = new URL(request.url).protocol === 'https:';
+	const secureFlag = isSecure ? '; Secure' : '';
+	headers.append('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=0`);
 	return jsonResponse({ success: true }, 200, headers);
 }
 

@@ -366,6 +366,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 		console.error("Telegram Webhook Error:", e.message);
 		if (noteId) {
 			try {
+				await env.DB.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId).run();
 				await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
 			} catch (cleanupError) {
 				console.error("Failed to cleanup note:", cleanupError.message);

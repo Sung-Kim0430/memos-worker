@@ -37,7 +37,7 @@ export async function handleSearchRequest(request, env, session) {
 	}
 
 	// --- 引入分页逻辑 ---
-	const page = parseInt(searchParams.get('page') || '1');
+	const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1);
 	const offset = (page - 1) * NOTES_PER_PAGE;
 	const limit = NOTES_PER_PAGE;
 	const tagName = searchParams.get('tag');
