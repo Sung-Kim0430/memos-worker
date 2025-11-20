@@ -318,7 +318,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 		};
 
 		// 1. 处理笔记正文 `content` 中的内联图片和视频
-			const urlRegex = /(\/api\/(?:files|images|tg-media-proxy)\/[a-zA-Z0-9\/_-]+)/g;
+			const urlRegex = /(\/api\/(?:files|images|tg-media-proxy)\/[a-zA-Z0-9\/_.-]+)/g;
 			const matches = [...note.content.matchAll(urlRegex)];
 			let processedContent = note.content;
 			for (const match of matches) {

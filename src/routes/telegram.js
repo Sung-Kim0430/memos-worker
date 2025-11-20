@@ -12,7 +12,14 @@ async function resolveTelegramUser(env, telegramUserId) {
 	}
 	const existing = await env.DB.prepare("SELECT * FROM users WHERE telegram_user_id = ?").bind(telegramUserId.toString()).first();
 	if (existing) return existing;
-	return ensureAdminUser(env);
+	try {
+		return await ensureAdminUser(env);
+	} catch (e) {
+		// If ensureAdminUser fails (e.g. missing env vars), try to find ANY admin
+		const admin = await env.DB.prepare("SELECT * FROM users WHERE is_admin = 1 LIMIT 1").first();
+		if (admin) return admin;
+		throw e;
+	}
 }
 
 export function telegramEntitiesToMarkdown(text, entities = []) {
