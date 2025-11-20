@@ -4058,6 +4058,8 @@
 				'Background': '背景',
 				'Image URL': '图片地址',
 				'Enter image URL...': '输入图片地址...',
+				'Enter the URL:': '请输入链接地址：',
+				'Enter the image URL:': '请输入图片地址：',
 				'Or Upload': '或上传',
 				'Glass Effect': '磨砂效果',
 				'Background Opacity': '背景透明度',
@@ -4105,6 +4107,7 @@
 				'Favorite': '收藏',
 				'Pin': '置顶',
 				'Archive': '归档',
+				'Unarchive': '取消归档',
 				'Share': '分享',
 				'Delete Note': '删除笔记',
 				'OK': '确认',
@@ -4130,9 +4133,24 @@
 				'Failed to load attachments.': '附件加载失败。',
 				'No items to display.': '暂无可展示的内容。',
 				'Failed to initialize the application. Please check your connection and try again.': '初始化失败，请检查网络后重试。',
+				'Failed to archive note.': '归档笔记失败。',
+				'Failed to unarchive note.': '取消归档失败。',
+				'Failed to fetch settings from server': '从服务器获取设置失败',
+				'Failed to save settings to server': '保存设置到服务器失败',
+				'Failed to revoke share link.': '撤销分享链接失败。',
+				'Failed to update expiration.': '更新过期时间失败。',
+				'Failed to generate share link.': '生成分享链接失败。',
+				'Failed to fetch attachments': '获取附件失败',
+				'Failed to generate link.': '生成链接失败。',
+				'Failed to delete file.': '删除文件失败。',
+				'Failed to fetch stats': '获取统计数据失败',
+				'Failed to fetch tags': '获取标签失败',
+				'Failed to unpin note.': '取消置顶失败。',
+				'Failed to fetch timeline': '获取时间线失败',
 				'Could not load activity data.': '无法加载活跃度数据。',
 				'Error loading timeline.': '时间线加载失败。',
 				'No tags yet.': '还没有标签。',
+				'No tags found': '未找到标签',
 				'Saving...': '保存中...',
 				'Pinned': '已置顶',
 				'Loading...': '加载中...',
@@ -4142,7 +4160,65 @@
 				'Updated!': '已更新！',
 				'Updating...': '更新中...',
 				'Revoking...': '撤销中...',
-				'Error!': '错误！'
+				'Error!': '错误！',
+				'Visibility': '可见性',
+				'Private': '私密',
+				'Users': '仅成员',
+				'Public': '公开',
+				'Keep Time': '保持时间',
+				'If checked, the note\'s timestamp will not be updated upon saving.': '勾选后保存时不会更新时间戳。',
+				'If unchecked, the note\'s timestamp will be updated upon saving.': '不勾选时保存会更新时间戳。',
+				'Add files': '添加文件',
+				'Delete file': '删除文件',
+				'Edit': '编辑',
+				'More actions': '更多操作',
+				'Fullscreen Edit': '全屏编辑',
+				'Back to top': '回到顶部',
+				'Unpin': '取消置顶',
+				'Unfavorite': '取消收藏',
+				'View Note': '查看笔记',
+				'Font Size': '字体大小',
+				'Size': '字号',
+				'Font Color': '字体颜色',
+				'Bold (Ctrl+B)': '加粗 (Ctrl+B)',
+				'Underline': '下划线',
+				'Italic (Ctrl+I)': '斜体 (Ctrl+I)',
+				'Strikethrough': '删除线',
+				'Insert Link (Ctrl+K)': '插入链接 (Ctrl+K)',
+				'Link': '链接',
+				'Insert Image': '插入图片',
+				'Img': '图片',
+				'Blockquote': '引用',
+				'Unordered List': '无序列表',
+				'Insert Code Block': '插入代码块',
+				'Code': '代码',
+				'Memos here...': '在这里写笔记...',
+				'User Management (Admin)': '用户管理（管理员）',
+				'Telegram User ID (optional)': 'Telegram 用户 ID（可选）',
+				'Create User': '创建用户',
+				'Admin': '管理员',
+				'Created': '创建时间',
+				'Actions': '操作',
+				'No users.': '暂无用户。',
+				'Yes': '是',
+				'No': '否',
+				'Remove admin': '移除管理员',
+				'Make admin': '设为管理员',
+				'Make Admin': '设为管理员',
+				'Revoke Admin': '撤销管理员',
+				'Reset Password': '重置密码',
+				'Password reset': '密码已重置',
+				'User created': '用户已创建',
+				'User updated': '用户已更新',
+				'User deleted': '用户已删除',
+				'Enter new password:': '输入新密码：',
+				'Delete this user?': '删除该用户？',
+				'Failed to create user': '创建用户失败',
+				'Failed to update admin flag': '更新管理员状态失败',
+				'Failed to reset password': '重置密码失败',
+				'Failed to delete user': '删除用户失败',
+				'Username and password are required.': '需要填写用户名和密码。',
+				'Filter by tag:': '按标签筛选：'
 			}
 		}
 	};
@@ -4185,6 +4261,72 @@
 		const num = Number(count) || 0;
 		const key = num === 1 ? 'note' : 'notes';
 		return `${num} ${t(key)}`;
+	}
+
+	function translateVisibility(value) {
+		const normalized = (value || 'private').toLowerCase();
+		if (normalized === 'public') return translateMessage('Public');
+		if (normalized === 'users') return translateMessage('Users');
+		return translateMessage('Private');
+	}
+
+	function renderVisibilityOptions(selectEl, currentValue) {
+		if (!selectEl) return;
+		const value = currentValue || selectEl.value || 'private';
+		selectEl.innerHTML = ['private', 'users', 'public'].map(opt => `<option value="${opt}">${translateVisibility(opt)}</option>`).join('');
+		selectEl.value = value;
+	}
+
+	function applyEditorToolbarTranslations() {
+		const fontSizeSelector = document.getElementById('fs-fontsize-selector');
+		if (fontSizeSelector) {
+			fontSizeSelector.title = translateMessage('Font Size');
+			const defaultOption = fontSizeSelector.querySelector('option[value=""]');
+			if (defaultOption) defaultOption.textContent = translateMessage('Size');
+		}
+		const fontColorBtn = document.getElementById('fs-fontcolor-btn');
+		if (fontColorBtn) fontColorBtn.title = translateMessage('Font Color');
+		[
+			['button[data-md="bold"]', 'Bold (Ctrl+B)'],
+			['button[data-md="underline"]', 'Underline'],
+			['button[data-md="italic"]', 'Italic (Ctrl+I)'],
+			['button[data-md="strike"]', 'Strikethrough'],
+			['button[data-md="link"]', 'Insert Link (Ctrl+K)'],
+			['button[data-md="image"]', 'Insert Image'],
+			['button[data-md="blockquote"]', 'Blockquote'],
+			['button[data-md="ulist"]', 'Unordered List'],
+			['button[data-md="code"]', 'Insert Code Block']
+		].forEach(([selector, key]) => {
+			document.querySelectorAll(selector).forEach(el => {
+				el.title = translateMessage(key);
+				if (el.textContent && ['Link', 'Img', 'Code'].includes(el.textContent.trim())) {
+					// Update short labels for clearer localization
+					el.textContent = translateMessage(el.textContent.trim());
+				}
+			});
+		});
+		const fsVisibilitySelect = document.getElementById('fs-visibility-select');
+		if (fsVisibilitySelect) {
+			renderVisibilityOptions(fsVisibilitySelect, fsVisibilitySelect.value);
+			fsVisibilitySelect.title = translateMessage('Visibility');
+		}
+		const fsTimestampLabel = document.getElementById('fs-timestamp-label');
+		if (fsTimestampLabel) {
+			fsTimestampLabel.title = translateMessage('If unchecked, the note\'s timestamp will be updated upon saving.');
+			const span = fsTimestampLabel.querySelector('span');
+			if (span) span.textContent = translateMessage('Keep Time');
+		}
+		const fsTextarea = document.getElementById('fs-editor-textarea');
+		if (fsTextarea) fsTextarea.placeholder = t('notePlaceholder');
+
+		const toolbarTitleMap = [
+			['#view-mode-split-btn', t('toggleSplit')],
+			['#view-mode-preview-btn', t('togglePreview')]
+		];
+		toolbarTitleMap.forEach(([selector, title]) => {
+			const el = document.querySelector(selector);
+			if (el) el.title = title;
+		});
 	}
 
 	const attributeBindings = [
@@ -4290,6 +4432,23 @@
 		document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
 		applyAttributeTranslations();
 		applyTextTranslations();
+		applyEditorToolbarTranslations();
+		const mainVisibilitySelect = document.getElementById('note-visibility-select');
+		renderVisibilityOptions(mainVisibilitySelect);
+		if (mainVisibilitySelect) mainVisibilitySelect.title = translateMessage('Visibility');
+		const backToTopBtn = document.getElementById('back-to-top-btn');
+		if (backToTopBtn) backToTopBtn.title = translateMessage('Back to top');
+		[
+			{ el: document.getElementById('new-username'), key: 'Username' },
+			{ el: document.getElementById('new-password'), key: 'Password' },
+			{ el: document.getElementById('new-telegram-id'), key: 'Telegram User ID (optional)' }
+		].forEach(item => {
+			if (item.el) item.el.placeholder = translateMessage(item.key);
+		});
+		const popoverShareBtn = document.querySelector('#note-popover-menu [data-action="share"]');
+		if (popoverShareBtn) popoverShareBtn.title = translateMessage('Share');
+		const popoverDeleteBtn = document.querySelector('#note-popover-menu [data-action="delete"]');
+		if (popoverDeleteBtn) popoverDeleteBtn.title = translateMessage('Delete Note');
 		if (languageSelect) {
 			languageSelect.setAttribute('aria-label', t('languageLabel'));
 			renderLanguageOptions(languageSelect);
@@ -4336,6 +4495,7 @@
 		settingsLanguageSelect.value = languagePreference;
 		settingsLanguageSelect.addEventListener('change', e => setLanguagePreference(e.target.value));
 	}
+	applyTranslations();
 
 	document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
 	window.addEventListener('DOMContentLoaded', applyTranslations);
@@ -4364,7 +4524,7 @@
 		};
 
 		const copyButtonHtml = `
-							<button class='copy-code-btn' data-code='${escapeHtml(code)}' title='Copy code'>
+							<button class='copy-code-btn' data-code='${escapeHtml(code)}' title='${t('copyCode')}'>
 									<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg>
 							</button>
 					`;
@@ -5056,7 +5216,7 @@
 			// 在归档视图下，只可能显示 "Unarchive"
 			archiveBtn.style.display = settings.showArchive ? '' : 'none'; // 同样要尊重设置
 			archiveBtn.classList.add('unarchive-mode');
-			archiveBtn.title = 'Unarchive';
+			archiveBtn.title = translateMessage('Unarchive');
 			archiveBtn.dataset.action = 'unarchive';
 
 			// 强制隐藏其他不相关的按钮
@@ -5066,7 +5226,7 @@
 			// 在常规视图下（Home, Favorites）
 			archiveBtn.style.display = settings.showArchive ? '' : 'none';
 			archiveBtn.classList.remove('unarchive-mode');
-			archiveBtn.title = 'Archive';
+			archiveBtn.title = translateMessage('Archive');
 			archiveBtn.dataset.action = 'archive';
 
 			// 只有在设置开启时，才显示收藏和置顶按钮
@@ -5077,11 +5237,11 @@
 			if (noteData) {
 				if (settings.showFavorites) {
 					favoriteBtn.classList.toggle('favorited', noteData.is_favorited);
-					favoriteBtn.title = noteData.is_favorited ? 'Unfavorite' : 'Favorite';
+					favoriteBtn.title = translateMessage(noteData.is_favorited ? 'Unfavorite' : 'Favorite');
 				}
 				if (settings.enablePinning) {
 					pinBtn.classList.toggle('pinned', noteData.is_pinned);
-					pinBtn.title = noteData.is_pinned ? 'Unpin' : 'Pin';
+					pinBtn.title = translateMessage(noteData.is_pinned ? 'Unpin' : 'Pin');
 				}
 			}
 		}
@@ -5132,7 +5292,7 @@
 					const res = await fetch(`/api/notes/${noteId}`, { method: 'PUT', body: formData });
 					if (!res.ok) throw new Error('Failed to update favorite status.');
 					actionButton.classList.toggle('favorited', newFavoriteState);
-					actionButton.title = newFavoriteState ? 'Unfavorite' : 'Favorite';
+					actionButton.title = translateMessage(newFavoriteState ? 'Unfavorite' : 'Favorite');
 					const noteInCache = allNotesCache.find(n => n.id === parseInt(noteId));
 					if (noteInCache) noteInCache.is_favorited = newFavoriteState;
 				} catch (error) {
@@ -5152,7 +5312,7 @@
 					const res = await fetch(`/api/notes/${noteId}`, { method: 'PUT', body: formData });
 					if (!res.ok) throw new Error('Failed to update pin status.');
 					actionButton.classList.toggle('pinned', newPinState);
-					actionButton.title = newPinState ? 'Unpin' : 'Pin';
+					actionButton.title = translateMessage(newPinState ? 'Unpin' : 'Pin');
 					const noteInCache = allNotesCache.find(n => n.id === parseInt(noteId));
 					if (noteInCache) noteInCache.is_pinned = newPinState;
 					await refreshNotes();
@@ -5172,7 +5332,8 @@
 
 				try {
 					const res = await fetch(`/api/notes/${noteId}`, { method: 'PUT', body: formData });
-					if (!res.ok) throw new Error(`Failed to ${action} note.`);
+					const archiveError = isArchiving ? 'Failed to archive note.' : 'Failed to unarchive note.';
+					if (!res.ok) throw new Error(archiveError);
 
 					// 操作成功后，直接从当前视图移除卡片
 					if (noteElement) {
@@ -5441,7 +5602,7 @@
                 </button>
             `;
 				deleteButtonHTML = `
-                <button class="delete-file-btn icon-btn" title="Delete file" data-note-id="${item.noteId}" data-file-id="${item.id}">
+                <button class="delete-file-btn icon-btn" title="${translateMessage('Delete file')}" data-note-id="${item.noteId}" data-file-id="${item.id}">
                     <svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/></svg>
                 </button>
                 `;
@@ -6923,11 +7084,11 @@
 				break;
 			}
 			case 'link':
-				const url = prompt('Enter the URL:', 'https://');
+				const url = prompt(translateMessage('Enter the URL:'), 'https://');
 				if (url) applyMarkdown('[', `](${url})`);
 				break;
 			case 'image':
-				const imgUrl = prompt('Enter the image URL:');
+				const imgUrl = prompt(translateMessage('Enter the image URL:'));
 				if (imgUrl) applyMarkdown('![', `](${imgUrl})`);
 				break;
 			case 'code':
@@ -7151,10 +7312,11 @@
 
 	// --- Utility Functions ---
 	const formatBytes = (b, d = 2) => {
-		if (b === 0) return '0 Bytes';
-		const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(b) / Math.log(k));
-		return parseFloat((b / Math.pow(k, i)).toFixed(d)) + ' ' + s[i];
+		const units = currentLanguage === 'zh' ? ['字节', 'KB', 'MB', 'GB'] : ['B', 'KB', 'MB', 'GB'];
+		if (!b || b === 0) return `0 ${units[0]}`;
+		const k = 1024;
+		const i = Math.min(Math.floor(Math.log(b) / Math.log(k)), units.length - 1);
+		return `${parseFloat((b / Math.pow(k, i)).toFixed(d))} ${units[i]}`;
 	};
 
 	let toastTimer;
@@ -7200,22 +7362,27 @@
 
 	function renderUserTable(users = []) {
 		if (!userTableBody) return;
+		const yesLabel = translateMessage('Yes');
+		const noLabel = translateMessage('No');
+		const resetPasswordLabel = translateMessage('Reset Password');
 		if (!users.length) {
-			userTableBody.innerHTML = `<tr><td colspan="5" style="padding:8px; color: var(--text-secondary);">No users.</td></tr>`;
+			userTableBody.innerHTML = `<tr><td colspan="5" style="padding:8px; color: var(--text-secondary);">${translateMessage('No users.')}</td></tr>`;
 			return;
 		}
 		userTableBody.innerHTML = users.map(user => {
-			const created = user.created_at ? new Date(user.created_at).toLocaleString() : '';
+			const created = user.created_at ? new Date(user.created_at).toLocaleString(getLocale()) : '';
+			const adminToggleTitle = translateMessage(user.is_admin ? 'Remove admin' : 'Make admin');
+			const adminToggleText = translateMessage(user.is_admin ? 'Revoke Admin' : 'Make Admin');
 			return `
 				<tr data-user-id="${user.id}">
 					<td style="padding:6px;">${user.username}</td>
-					<td style="padding:6px;">${user.is_admin ? 'Yes' : 'No'}</td>
+					<td style="padding:6px;">${user.is_admin ? yesLabel : noLabel}</td>
 					<td style="padding:6px;">${user.telegram_user_id || ''}</td>
 					<td style="padding:6px;">${created}</td>
 					<td style="padding:6px; display:flex; gap:6px; flex-wrap:wrap;">
-						<button class="icon-btn btn-accent user-action" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${user.is_admin ? 'Remove admin' : 'Make admin'}">${user.is_admin ? 'Revoke Admin' : 'Make Admin'}</button>
-						<button class="icon-btn user-action" data-action="reset-password">Reset Password</button>
-						<button class="icon-btn btn-danger user-action" data-action="delete-user">Delete</button>
+						<button class="icon-btn btn-accent user-action" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
+						<button class="icon-btn user-action" data-action="reset-password">${resetPasswordLabel}</button>
+						<button class="icon-btn btn-danger user-action" data-action="delete-user">${translateMessage('Delete')}</button>
 					</td>
 				</tr>
 			`;
@@ -7829,7 +7996,7 @@
 		if (filteredTags.length === 0) {
 			const li = document.createElement('li');
 			li.className = 'no-results';
-			li.textContent = filter ? 'No tags found' : 'No tags yet';
+			li.textContent = filter ? translateMessage('No tags found') : translateMessage('No tags yet.');
 			tagDropdownList.appendChild(li);
 			return;
 		}
@@ -7983,7 +8150,7 @@
 					if (!res.ok) throw new Error(data.error || 'Failed to update admin flag');
 					showToast('User updated');
 				} else if (action === 'reset-password') {
-					const newPwd = prompt('Enter new password:');
+					const newPwd = prompt(translateMessage('Enter new password:'));
 					if (!newPwd) return;
 					const res = await fetch(`/api/users/${userId}`, {
 						method: 'PUT',
@@ -8110,13 +8277,19 @@
 	noteElement.dataset.id = noteId;
 	noteElement.dataset.visibility = note.visibility || 'private';
 	const time = formatTimestamp(note.updated_at);
+	const visibilityBadgeLabel = translateVisibility(note.visibility);
+	const visibilityOptionsHtml = ['private', 'users', 'public'].map(opt => {
+		const selected = note.visibility === opt ? 'selected' : '';
+		return `<option value="${opt}" ${selected}>${translateVisibility(opt)}</option>`;
+	}).join('');
+	const timestampHint = translateMessage('If checked, the note\'s timestamp will not be updated upon saving.');
 		let editedIndicatorHtml = '';
 		// if (note.updated_at !== note.created_at) {
 		// 	const editedTime = formatTimestamp(note.updated_at);
 		// 	editedIndicatorHtml = ` ·&nbsp;<span class="note-edited-indicator" title="Edited at: ${editedTime.absolute}">edited</span>`;
 		// }
 		const pinnedIconHTML = note.is_pinned ? `
-				<button class='unpin-btn icon-btn pinned' title='Unpin'>
+				<button class='unpin-btn icon-btn pinned' title='${translateMessage('Unpin')}'>
 						<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor' fill='currentColor' stroke-linecap='round' stroke-linejoin='round'>
 								<path stroke='none' d='M0 0h24v24H0z' fill='none'></path>
 								<path d='M9 4v6l-2 4v2h10v-2l-2 -4v-6'></path>
@@ -8137,7 +8310,7 @@
 	            </button>
 	        `;
 					const deleteButtonHTML = `
-							<button class="delete-file-btn icon-btn" title="Delete file" data-note-id="${noteId}" data-file-id="${file.id}">
+							<button class="delete-file-btn icon-btn" title="${translateMessage('Delete file')}" data-note-id="${noteId}" data-file-id="${file.id}">
 							<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 0 24 24" width="18px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/></svg>
 							</button>
 						`;
@@ -8170,15 +8343,15 @@
 										<div class='note-header'>
 										<div class='note-meta'> ${index}
 											<span title='${time.absolute}'>${time.relative}</span>
-											<span class='note-visibility-badge'>${(note.visibility || 'private')}</span>
+											<span class='note-visibility-badge'>${visibilityBadgeLabel}</span>
 											${editedIndicatorHtml}
 										</div>
 											<div class='note-actions view-mode'>
 													${pinnedIconHTML}
-													<button class='edit icon-btn' title='Edit'>
+													<button class='edit icon-btn' title='${translateMessage('Edit')}'>
 															<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z'></path></svg>
 													</button>
-													<button class='more-actions-btn icon-btn' title='More actions'>
+													<button class='more-actions-btn icon-btn' title='${translateMessage('More actions')}'>
 															 <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
 													</button>
 											</div>
@@ -8186,41 +8359,39 @@
 <!--													<svg xmlns='http://www.w3.org/2000/svg' height='24px' viewBox='0 0 24 24' width='24px' fill='currentColor'><path d='M0 0h24v24H0V0z' fill='none'/><path d='M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z'/></svg>-->
 <!--											</button>-->
 												<div class='edit-actions edit-mode'>
-														<label class="timestamp-toggle-label" title="If checked, the note's timestamp will not be updated upon saving.">
+														<label class="timestamp-toggle-label" title="${timestampHint}">
 																<input type="checkbox" class="update-timestamp-toggle" checked>
-																<span>Keep Time</span>
+																<span>${translateMessage('Keep Time')}</span>
 														</label>
-														<select class="edit-visibility-select visibility-select" title="Visibility">
-															<option value="private" ${note.visibility === 'private' ? 'selected' : ''}>Private</option>
-															<option value="users" ${note.visibility === 'users' ? 'selected' : ''}>Users</option>
-															<option value="public" ${note.visibility === 'public' ? 'selected' : ''}>Public</option>
+														<select class="edit-visibility-select visibility-select" title="${translateMessage('Visibility')}">
+															${visibilityOptionsHtml}
 														</select>
-														<label class='icon-btn' title='Add files'>
+														<label class='icon-btn' title='${translateMessage('Add files')}'>
 																<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z'></path></svg>
 																<input type='file' class='edit-file-input' multiple style='display:none;'>
 														</label>
-													<button class='md-preview-toggle-btn icon-btn' title='Toggle Preview'>
+													<button class='md-preview-toggle-btn icon-btn' title='${t('togglePreview')}'>
 															<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' stroke-width='2' stroke='currentColor' fill='none' stroke-linecap='round' stroke-linejoin='round'><path stroke='none' d='M0 0h24v24H0z' fill='none'/><circle cx='12' cy='12' r='2' /><path d='M22 12c-2.667 4.667 -6 7 -10 7s-7.333 -2.333 -10 -7c2.667 -4.667 6 -7 10 -7s7.333 2.333 10 7' /></svg>
 													</button>
-													<button class='md-split-toggle-btn icon-btn' title='Toggle Split View' style='display: none;'>
+													<button class='md-split-toggle-btn icon-btn' title='${t('toggleSplit')}' style='display: none;'>
 															<svg xmlns='http://www.w3.org/2000/svg' height='24px' viewBox='0 0 24 24' width='24px' fill='currentColor'><path d='M0 0h24v24H0V0z' fill='none'></path><path d='M3 15h8v-2H3v2zm0 4h8v-2H3v2zm0-8h8V9H3v2zm0-6v2h8V5H3zm10 0h8v14h-8V5z'></path></svg>
 													</button>
-													<button class='fullscreen-edit icon-btn' title='Fullscreen Edit'>
+													<button class='fullscreen-edit icon-btn' title='${translateMessage('Fullscreen Edit')}'>
 															<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z'></path></svg>
 													</button>
-													<button class='save-edit icon-btn btn-accent' title='Save'>
+													<button class='save-edit icon-btn btn-accent' title='${t('save')}'>
 															<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z'></path></svg>
 													</button>
-													<button class='cancel-edit icon-btn' title='Cancel'>
+													<button class='cancel-edit icon-btn' title='${translateMessage('Cancel')}'>
 															<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='currentColor'><path d='M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z'></path></svg>
 													</button>
 											</div>
 									</div>
 									<div class='note-content view-mode'></div>
 									${attachmentsHTML}
-    							<button class='toggle-content-btn'>Show more</button>
+    							<button class='toggle-content-btn'>${t('showMore')}</button>
 									<div class='edit-area edit-mode'>
-											<textarea class='edit-textarea' placeholder='Memos here...'></textarea>
+											<textarea class='edit-textarea' placeholder='${t('notePlaceholder')}'></textarea>
 											<div class='edit-preview note-content'></div>
 									</div>
 
@@ -9332,7 +9503,7 @@
 			tags.forEach(tag => {
 				const tagLi = document.createElement('li');
 				tagLi.innerHTML = `
-                    <div class='tag-item' data-tag-name='${tag.name}' title='Filter by tag: #${tag.name}'>
+                    <div class='tag-item' data-tag-name='${tag.name}' title='${translateMessage('Filter by tag:')} #${tag.name}'>
                         <span class='tag-label'>
                             <span class='tag-hash'>#</span>
                             <span class='tag-name'>${tag.name}</span>

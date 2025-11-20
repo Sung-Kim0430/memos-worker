@@ -265,10 +265,11 @@ function formatTimestamp(timestamp) {
 }
 
 const formatBytes = (b, d = 2) => {
-	if (!b || b === 0) return '0 Bytes';
-	const k = 1024, s = ['B', 'KB', 'MB', 'GB'];
-	const i = Math.floor(Math.log(b) / Math.log(k));
-	return parseFloat((b / Math.pow(k, i)).toFixed(d)) + ' ' + s[i];
+	const units = currentLanguage === 'zh' ? ['字节', 'KB', 'MB', 'GB'] : ['B', 'KB', 'MB', 'GB'];
+	if (!b || b === 0) return `0 ${units[0]}`;
+	const k = 1024;
+	const i = Math.min(Math.floor(Math.log(b) / Math.log(k)), units.length - 1);
+	return `${parseFloat((b / Math.pow(k, i)).toFixed(d))} ${units[i]}`;
 };
 
 const textFileExtensions = ['txt', 'js', 'json', 'py', 'css', 'html', 'md', 'sh', 'java', 'c', 'cpp', 'go', 'rb', 'xml', 'log', 'yaml', 'toml', 'yml'];
