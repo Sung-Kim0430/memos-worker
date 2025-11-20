@@ -474,7 +474,8 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				}
 				throw err;
 			}
-
+			break;
+			}
 				case 'DELETE': {
 					if (!canModify) {
 						return jsonResponse({ error: 'Forbidden' }, 403);
