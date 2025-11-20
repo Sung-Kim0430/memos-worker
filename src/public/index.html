@@ -3867,6 +3867,12 @@
 	const languageSelect = document.getElementById('language-select');
 	const settingsLanguageSelect = document.getElementById('settings-language-select');
 
+	const themeOptions = ['light', 'dark', 'system'];
+	let themePreference = localStorage.getItem('theme');
+	if (!themeOptions.includes(themePreference)) {
+		themePreference = 'system';
+	}
+
 	const translations = {
 		en: {
 			langLabel: 'English',
@@ -7226,8 +7232,6 @@
 	selectFilesBtn.addEventListener('click', () => {
 		noteFile.click();
 	});
-	const themeOptions = ['light', 'dark', 'system'];
-	let themePreference = localStorage.getItem('theme') || 'system';
 	const colorSchemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
 	const getSystemTheme = () => colorSchemeMediaQuery.matches ? 'dark' : 'light';
