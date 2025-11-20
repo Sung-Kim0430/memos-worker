@@ -801,22 +801,37 @@
 
 	.user-admin-form {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		grid-template-columns: 1fr;
 		gap: 0.75rem;
-		align-items: end;
+		align-items: start;
 		padding: 0.75rem 0;
-	}
-
-	@media (max-width: 768px) {
-		.user-admin-form {
-			grid-template-columns: 1fr;
-		}
 	}
 
 	.user-admin-field {
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
+		grid-column: 1 / -1;
+	}
+
+	.user-admin-inline {
+		grid-column: 1 / -1;
+		display: grid;
+		grid-template-columns: 1fr auto;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.user-admin-inline .user-admin-field {
+		grid-column: auto;
+		margin: 0;
+	}
+
+	@media (max-width: 640px) {
+		.user-admin-inline {
+			grid-template-columns: 1fr;
+			align-items: flex-start;
+		}
 	}
 
 	.user-admin-field label {
@@ -864,11 +879,11 @@
 	}
 
 	.user-admin-actions {
-		grid-column: 1 / -1;
 		display: flex;
 		justify-content: flex-end;
 		gap: 0.5rem;
-		padding-top: 0.5rem;
+		padding-top: 0;
+		justify-self: end;
 	}
 
 	.user-admin-actions .btn {
@@ -966,8 +981,9 @@
 	}
 
 	.user-table .time-cell {
-		white-space: nowrap;
+		white-space: normal;
 		font-variant-numeric: tabular-nums;
+		line-height: 1.35;
 	}
 
 	.user-table .nowrap-cell {
@@ -977,6 +993,15 @@
 	.user-table .telegram-cell[data-empty='true'] {
 		color: var(--text-secondary);
 		font-style: italic;
+	}
+
+	.user-table .time-date,
+	.user-table .time-time {
+		display: block;
+	}
+
+	.user-table .time-time {
+		color: var(--text-secondary);
 	}
 
 	.user-actions {
@@ -4182,15 +4207,17 @@
 							<input type='text' id='new-telegram-id' class='user-input'
 								placeholder='Telegram User ID (optional)'>
 						</div>
-						<div class='user-admin-field'>
-							<label for='new-is-admin'>Admin</label>
-							<label class='user-admin-checkbox' for='new-is-admin'>
-								<input type='checkbox' id='new-is-admin' aria-label='Admin'>
-								<span>Admin</span>
-							</label>
-						</div>
-						<div class='user-admin-actions'>
-							<button type='submit' class='btn btn-primary'>Create User</button>
+						<div class='user-admin-inline'>
+							<div class='user-admin-field'>
+								<label for='new-is-admin'>Admin</label>
+								<label class='user-admin-checkbox' for='new-is-admin'>
+									<input type='checkbox' id='new-is-admin' aria-label='Admin'>
+									<span>Admin</span>
+								</label>
+							</div>
+							<div class='user-admin-actions'>
+								<button type='submit' class='btn btn-primary'>Create User</button>
+							</div>
 						</div>
 					</form>
 					<div class='setting-item'>
@@ -7867,12 +7894,22 @@
 		return `${parseFloat((b / Math.pow(k, i)).toFixed(d))} ${units[i]}`;
 	};
 
-	const formatDateTime = (value) => {
-		if (!value) return '-';
+	const padTimeUnit = (n) => String(n).padStart(2, '0');
+
+	const formatDateTimeParts = (value) => {
+		if (!value) return null;
 		const date = new Date(value);
-		if (Number.isNaN(date.getTime())) return '-';
-		const pad = (n) => String(n).padStart(2, '0');
-		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+		if (Number.isNaN(date.getTime())) return null;
+		return {
+			date: `${date.getFullYear()}-${padTimeUnit(date.getMonth() + 1)}-${padTimeUnit(date.getDate())}`,
+			time: `${padTimeUnit(date.getHours())}:${padTimeUnit(date.getMinutes())}:${padTimeUnit(date.getSeconds())}`
+		};
+	};
+
+	const formatDateTime = (value) => {
+		const parts = formatDateTimeParts(value);
+		if (!parts) return '-';
+		return `${parts.date} ${parts.time}`;
 	};
 
 	let toastTimer;
@@ -7926,7 +7963,8 @@
 			return;
 		}
 		userTableBody.innerHTML = users.map(user => {
-			const created = formatDateTime(user.created_at);
+			const createdParts = formatDateTimeParts(user.created_at);
+			const createdCell = createdParts ? `<span class="time-date">${createdParts.date}</span><span class="time-time">${createdParts.time}</span>` : formatDateTime(user.created_at);
 			const telegram = user.telegram_user_id || '-';
 			const adminToggleTitle = translateMessage(user.is_admin ? 'Remove admin' : 'Make admin');
 			const adminToggleText = translateMessage(user.is_admin ? 'Revoke Admin' : 'Make Admin');
@@ -7935,7 +7973,7 @@
 					<td>${user.username}</td>
 					<td class="nowrap-cell">${user.is_admin ? yesLabel : noLabel}</td>
 					<td class="telegram-cell" data-empty="${telegram === '-' ? 'true' : 'false'}">${telegram}</td>
-					<td class="time-cell">${created}</td>
+					<td class="time-cell">${createdCell}</td>
 					<td>
 						<div class="user-actions" role="group" aria-label="${translateMessage('Actions')}">
 							<button class="user-action btn-accent" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
