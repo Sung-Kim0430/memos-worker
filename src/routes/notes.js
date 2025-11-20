@@ -58,11 +58,11 @@ export async function handleNotesList(request, env, session) {
 				}
 
 				if (startTimestamp && endTimestamp) {
-					// 将字符串时间戳转换为数字
-					const startMs = parseInt(startTimestamp);
-					const endMs = parseInt(endTimestamp);
+					// 将字符串时间戳转换为数字并校验范围
+					const startMs = Number(startTimestamp);
+					const endMs = Number(endTimestamp);
 
-					if (!isNaN(startMs) && !isNaN(endMs)) {
+					if (Number.isFinite(startMs) && Number.isFinite(endMs) && startMs > 0 && endMs > 0 && startMs < endMs) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");
 						bindings.push(startMs, endMs);
 					}

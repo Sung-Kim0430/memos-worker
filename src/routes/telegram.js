@@ -151,6 +151,9 @@ export async function handleTelegramWebhook(request, env, secret) {
 	}
 	let chatId = null;
 	const botToken = env.TELEGRAM_BOT_TOKEN;
+	const bucket = env.NOTES_R2_BUCKET;
+	let noteId = null;
+	const cleanupKeys = [];
 	try {
 		const update = await request.json();
 		const message = update.message || update.channel_post;
@@ -181,7 +184,6 @@ export async function handleTelegramWebhook(request, env, secret) {
 		}
 
 		const db = env.DB;
-		const bucket = env.NOTES_R2_BUCKET;
 		if (!botToken) {
 			console.error("TELEGRAM_BOT_TOKEN secret is not set.");
 			return new Response('Bot not configured', { status: 500 });
@@ -230,7 +232,11 @@ export async function handleTelegramWebhook(request, env, secret) {
 		// 1) 创建一个空内容的 note 占位
 		const now = Date.now();
 		const insertStmt = db.prepare("INSERT INTO notes (content, files, is_pinned, created_at, updated_at, owner_id, visibility, pics, videos) VALUES (?, ?, 0, ?, ?, ?, ?, '[]', '[]') RETURNING id");
-		const { id: noteId } = await insertStmt.bind("", "[]", now, now, ownerUser.id, 'private').first();
+		const created = await insertStmt.bind("", "[]", now, now, ownerUser.id, 'private').first();
+		noteId = created?.id;
+		if (!noteId) {
+			throw new Error('Failed to create note placeholder');
+		}
 
 		const filesMeta = [];
 		const picObjects = [];
@@ -255,7 +261,9 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const fileRes = await fetch(downloadUrl);
 				if (!fileRes.ok) throw new Error("从 Telegram 下载图片失败。");
 				const fileId = crypto.randomUUID();
-				await bucket.put(`${noteId}/${fileId}`, fileRes.body);
+				const r2Key = `${noteId}/${fileId}`;
+				await bucket.put(r2Key, fileRes.body);
+				cleanupKeys.push(r2Key);
 				const fileUrl = `/api/files/${noteId}/${fileId}`;
 				mediaEmbeds.push(`![tg-image](${fileUrl})`);
 				picObjects.push(fileUrl);
@@ -278,11 +286,13 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const videoRes = await fetch(downloadUrl);
 				if (!videoRes.ok) throw new Error("从 Telegram 下载视频失败。");
 				const videoId = crypto.randomUUID();
-				await bucket.put(`${noteId}/${videoId}`, videoRes.body, {
+				const r2Key = `${noteId}/${videoId}`;
+				await bucket.put(r2Key, videoRes.body, {
 					httpMetadata: {
 						contentType: video.mime_type || 'video/mp4'
 					}
 				});
+				cleanupKeys.push(r2Key);
 				const videoUrl = `/api/files/${noteId}/${videoId}`;
 				videoObjects.push(videoUrl);
 				mediaEmbeds.push(`[tg-video](${videoUrl})`);
@@ -313,7 +323,9 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const fileRes = await fetch(downloadUrl);
 				if (!fileRes.ok) throw new Error("从 Telegram 下载文件失败。");
 				const fileId = crypto.randomUUID();
-				await bucket.put(`${noteId}/${fileId}`, fileRes.body);
+				const r2Key = `${noteId}/${fileId}`;
+				await bucket.put(r2Key, fileRes.body);
+				cleanupKeys.push(r2Key);
 				filesMeta.push({
 					id: fileId,
 					name: document.file_name,
@@ -345,6 +357,20 @@ export async function handleTelegramWebhook(request, env, secret) {
 
 	} catch (e) {
 		console.error("Telegram Webhook Error:", e.message);
+		if (noteId) {
+			try {
+				await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
+			} catch (cleanupError) {
+				console.error("Failed to cleanup note:", cleanupError.message);
+			}
+		}
+		if (cleanupKeys.length > 0) {
+			try {
+				await bucket.delete(cleanupKeys);
+			} catch (cleanupError) {
+				console.error("Failed to cleanup uploaded files:", cleanupError.message);
+			}
+		}
 		if (chatId && botToken) {
 			await sendTelegramMessage(chatId, `❌ 保存笔记时出错: ${e.message}`, botToken);
 		}

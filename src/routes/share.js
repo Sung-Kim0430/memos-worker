@@ -324,8 +324,9 @@ export async function handlePublicNoteRequest(publicId, env) {
 			for (const match of matches) {
 				const privateUrl = match[0];
 				const publicUrl = await createPublicUrlFor(privateUrl);
-			processedContent = processedContent.replace(privateUrl, publicUrl);
-		}
+				const escaped = privateUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				processedContent = processedContent.replace(new RegExp(escaped, 'g'), publicUrl);
+			}
 		note.content = processedContent;
 
 		// 2. 处理 `files` 附件列表

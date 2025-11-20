@@ -20,7 +20,11 @@ async function deriveKey(password, salt, iterations = PBKDF_ITERATIONS) {
 	return btoa(String.fromCharCode(...new Uint8Array(bits)));
 }
 
-async function hashPassword(password, salt = crypto.randomUUID()) {
+async function hashPassword(password, salt = null) {
+	if (!salt) {
+		const randomBytes = crypto.getRandomValues(new Uint8Array(32));
+		salt = btoa(String.fromCharCode(...randomBytes));
+	}
 	const hash = await deriveKey(password, salt);
 	return { hash, salt };
 }
