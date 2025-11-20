@@ -18,6 +18,13 @@ export async function isSessionAuthenticated(request, env) {
 export async function handleLogin(request, env) {
 	try {
 		const { username, password } = await request.json();
+		if (!env.USERNAME || !env.PASSWORD) {
+			console.error("Login Error: USERNAME/PASSWORD environment variables are not configured.");
+			return jsonResponse({ error: 'Server authentication is not configured.' }, 500);
+		}
+		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+			return jsonResponse({ error: 'Invalid credentials' }, 401);
+		}
 		if (username === env.USERNAME && password === env.PASSWORD) {
 			const sessionId = crypto.randomUUID();
 			const sessionData = { username, loggedInAt: Date.now() };

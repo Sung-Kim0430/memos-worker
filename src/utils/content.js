@@ -17,6 +17,14 @@ export function extractImageUrls(content) {
 	return JSON.stringify(urls);
 }
 
+// 从 Markdown 中提取视频占位（目前用于 Telegram 视频的 [tg-video](url) 格式）
+export function extractVideoUrls(content) {
+	const regex = /\[tg-video\]\((.*?)\)/g;
+	const matches = Array.from(content.matchAll(regex));
+	const urls = matches.map(match => match[1]);
+	return JSON.stringify(urls);
+}
+
 /**
  * 从扁平的节点列表中构建层级树结构
  * @param {Array<object>} nodes - 从数据库查询出的节点数组

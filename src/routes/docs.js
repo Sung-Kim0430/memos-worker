@@ -47,6 +47,13 @@ export async function handleDocsNodeCreate(request, env) {
 			return jsonResponse({ error: 'Both type and title are required.' }, 400);
 		}
 
+		if (parent_id) {
+			const parent = await env.DB.prepare("SELECT id FROM nodes WHERE id = ?").bind(parent_id).first();
+			if (!parent) {
+				return jsonResponse({ error: 'Parent node does not exist.' }, 400);
+			}
+		}
+
 		const id = crypto.randomUUID();
 		const now = Date.now();
 		const stmt = env.DB.prepare("INSERT INTO nodes (id, type, title, parent_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, '', ?, ?) RETURNING id");

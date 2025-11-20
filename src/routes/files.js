@@ -8,8 +8,9 @@ export async function handleFileRequest(noteId, fileId, request, env) {
 	// 尝试从数据库获取元数据
 	const note = await db.prepare("SELECT files FROM notes WHERE id = ?").bind(id).first();
 
-	// 【核心修改】即使 note 不存在或 files 为空，我们也不立即返回 404，
-	// 因为图片可能只记录在 pics 字段中。
+	if (!note) {
+		return new Response('Not Found', { status: 404 });
+	}
 
 	let files = [];
 	if (note && typeof note.files === 'string') {
@@ -21,6 +22,13 @@ export async function handleFileRequest(noteId, fileId, request, env) {
 	}
 
 	const fileMeta = files.find(f => f.id === fileId);
+
+	// Telegram 代理文档走代理路由，无需访问 R2
+	if (fileMeta && fileMeta.type === 'telegram_document') {
+		const proxyId = fileMeta.file_id || fileMeta.id || fileId;
+		const targetUrl = new URL(`/api/tg-media-proxy/${proxyId}`, request.url);
+		return Response.redirect(targetUrl.toString(), 302);
+	}
 
 	// 尝试从 R2 获取文件对象
 	const object = await env.NOTES_R2_BUCKET.get(`${id}/${fileId}`);

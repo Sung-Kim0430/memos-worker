@@ -1,5 +1,5 @@
 import { NOTES_PER_PAGE } from '../constants.js';
-import { extractImageUrls } from '../utils/content.js';
+import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
 import { jsonResponse } from '../utils/response.js';
 import { processNoteTags } from '../utils/tags.js';
 
@@ -92,16 +92,17 @@ export async function handleNotesList(request, env) {
 				const now = Date.now();
 				const filesMeta = [];
 
-				// 【核心修改】在插入数据库前，先提取图片 URL
+				// 【核心修改】在插入数据库前，先提取图片与视频 URL
 				const picUrls = extractImageUrls(content);
+				const videoUrls = extractVideoUrls(content);
 
 				// 【核心修改】在 INSERT 语句中加入新的 pics 字段
 				const insertStmt = db.prepare(
-					"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics) VALUES (?, ?, 0, ?, ?, ?) RETURNING id"
+					"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics, videos) VALUES (?, ?, 0, ?, ?, ?, ?) RETURNING id"
 				);
 				// 先用一个空的 files 数组插入
 				// 【核心修改】将提取出的 picUrls 绑定到 SQL 语句中
-				const { id: noteId } = await insertStmt.bind(content, "[]", now, now, picUrls).first();
+				const { id: noteId } = await insertStmt.bind(content, "[]", now, now, picUrls, videoUrls).first();
 				if (!noteId) {
 					throw new Error("Failed to create note and get ID.");
 				}
@@ -151,7 +152,7 @@ export async function handleNoteDetail(request, noteId, env) {
 		if (!existingNote) {
 			return new Response('Not Found', { status: 404 });
 		}
-		// 确保 files 字段是数组
+		// 确保 files/pics/videos 字段是数组
 		try {
 			if (typeof existingNote.files === 'string') {
 				existingNote.files = JSON.parse(existingNote.files);
@@ -159,39 +160,72 @@ export async function handleNoteDetail(request, noteId, env) {
 		} catch (e) {
 			existingNote.files = [];
 		}
+		let existingPics = [];
+		if (Array.isArray(existingNote.pics)) {
+			existingPics = existingNote.pics;
+		} else if (typeof existingNote.pics === 'string') {
+			try { existingPics = JSON.parse(existingNote.pics); } catch (e) { existingPics = []; }
+		}
+		let existingVideos = [];
+		if (Array.isArray(existingNote.videos)) {
+			existingVideos = existingNote.videos;
+		} else if (typeof existingNote.videos === 'string') {
+			try { existingVideos = JSON.parse(existingNote.videos); } catch (e) { existingVideos = []; }
+		}
 
 		switch (request.method) {
-			case 'PUT': {
-				const formData = await request.formData();
-				const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
+				case 'PUT': {
+					const formData = await request.formData();
+					const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
 
-				if (formData.has('content')) {
-					const content = formData.get('content')?.toString() ?? existingNote.content;
-					let currentFiles = existingNote.files;
+					if (formData.has('content')) {
+						const content = formData.get('content')?.toString() ?? existingNote.content;
+						let currentFiles = existingNote.files;
 
-					// --- 现在的文件处理只关心非图片附件 ---
-					// 处理附件删除 (逻辑不变，因为它操作的是 files 字段)
-					const filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
-					if (filesToDelete.length > 0) {
-						const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
-						await env.NOTES_R2_BUCKET.delete(r2KeysToDelete);
-						currentFiles = currentFiles.filter(file => !filesToDelete.includes(file.id));
-					}
-
-					// 在处理完文件删除后，检查笔记是否应该被删除
-					const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
-					if (content.trim() === '' && currentFiles.length === 0 && !hasNewFiles) {
-						// 笔记即将变空，执行删除操作
-						// 1. 删除 R2 中的所有剩余文件（如果有的话，虽然逻辑上这里 currentFiles 应该是空的）
-						const allR2Keys = existingNote.files.map(file => `${id}/${file.id}`);
-						if (allR2Keys.length > 0) {
-							await env.NOTES_R2_BUCKET.delete(allR2Keys);
+						// --- 现在的文件处理只关心非图片附件 ---
+						// 处理附件删除 (逻辑不变，因为它操作的是 files 字段)
+						const filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
+						if (filesToDelete.length > 0) {
+							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
+							await env.NOTES_R2_BUCKET.delete(r2KeysToDelete);
+							currentFiles = currentFiles.filter(file => !filesToDelete.includes(file.id));
 						}
-						// 2. 从数据库删除笔记
-						await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
-						// 3. 返回特殊标记，告知前端整个笔记已被删除
-						return jsonResponse({ success: true, noteDeleted: true });
-					}
+
+						// 解析新的图片/视频集合，用于后续更新及空内容判断
+						const picUrls = extractImageUrls(content);
+						const videoUrls = extractVideoUrls(content);
+						let nextPicList = [];
+						let nextVideoList = [];
+						try { nextPicList = JSON.parse(picUrls || '[]'); } catch (e) { nextPicList = []; }
+						try { nextVideoList = JSON.parse(videoUrls || '[]'); } catch (e) { nextVideoList = []; }
+
+						// 在处理完文件删除后，检查笔记是否应该被删除
+						const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
+						if (content.trim() === '' && currentFiles.length === 0 && nextPicList.length === 0 && nextVideoList.length === 0 && !hasNewFiles) {
+							// 笔记即将变空，执行删除操作
+							// 1. 删除 R2 中的所有剩余文件/图片/视频
+							const attachmentKeys = existingNote.files.map(file => `${id}/${file.id}`);
+							const picKeys = existingPics.map(url => {
+								const imageMatch = url.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
+								if (imageMatch) return `uploads/${imageMatch[1]}`;
+								const fileMatch = url.match(/^\/api\/files\/\d+\/([a-zA-Z0-9-]+)$/);
+								if (fileMatch) return `${id}/${fileMatch[1]}`;
+								return null;
+							}).filter(Boolean);
+							const videoKeys = existingVideos.map(url => {
+								const fileMatch = url.match(/^\/api\/files\/\d+\/([a-zA-Z0-9-]+)$/);
+								if (fileMatch) return `${id}/${fileMatch[1]}`;
+								return null;
+							}).filter(Boolean);
+							const allR2Keys = [...attachmentKeys, ...picKeys, ...videoKeys];
+							if (allR2Keys.length > 0) {
+								await env.NOTES_R2_BUCKET.delete(allR2Keys);
+							}
+							// 2. 从数据库删除笔记
+							await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
+							// 3. 返回特殊标记，告知前端整个笔记已被删除
+							return jsonResponse({ success: true, noteDeleted: true });
+						}
 					// 处理新附件上传
 					const newFiles = formData.getAll('file');
 					for (const file of newFiles) {
@@ -201,18 +235,17 @@ export async function handleNoteDetail(request, noteId, env) {
 							await env.NOTES_R2_BUCKET.put(`${id}/${fileId}`, file.stream());
 							currentFiles.push({ id: fileId, name: file.name, size: file.size, type: file.type });
 						}
-					}
+						}
 
-					// 在更新数据库前，提取新的图片 URL 列表
-					const picUrls = extractImageUrls(content);
-					const newTimestamp = shouldUpdateTimestamp ? Date.now() : existingNote.updated_at;
-					// 在 UPDATE 语句中加入 pics 字段的更新
-					const stmt = db.prepare(
-						"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ? WHERE id = ?"
-					);
-					await stmt.bind(content, JSON.stringify(currentFiles), newTimestamp, picUrls, id).run();
-					await processNoteTags(db, id, content);
-				}
+						// 在更新数据库前，提取新的图片 URL 列表
+						const newTimestamp = shouldUpdateTimestamp ? Date.now() : existingNote.updated_at;
+						// 在 UPDATE 语句中加入 pics 字段的更新
+						const stmt = db.prepare(
+							"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ?"
+						);
+						await stmt.bind(content, JSON.stringify(currentFiles), newTimestamp, picUrls, videoUrls, id).run();
+						await processNoteTags(db, id, content);
+					}
 
 				if (formData.has('isPinned')) { // --- 这是置顶状态的更新 ---
 					const isPinned = formData.get('isPinned') === 'true' ? 1 : 0;
@@ -246,13 +279,8 @@ export async function handleNoteDetail(request, noteId, env) {
 						.map(file => `${id}/${file.id}`);
 					allR2KeysToDelete.push(...attachmentKeys);
 				}
-				let picUrls = [];
-				if (typeof existingNote.pics === 'string') {
-					try { picUrls = JSON.parse(existingNote.pics); } catch (e) { }
-				}
-
-				if (picUrls.length > 0) {
-					const imageKeys = picUrls.map(url => {
+				if (existingPics.length > 0) {
+					const imageKeys = existingPics.map(url => {
 						const imageMatch = url.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
 						if (imageMatch) {
 							return `uploads/${imageMatch[1]}`;
@@ -265,6 +293,17 @@ export async function handleNoteDetail(request, noteId, env) {
 					}).filter(key => key !== null);
 
 					allR2KeysToDelete.push(...imageKeys);
+				}
+
+				if (existingVideos.length > 0) {
+					const videoKeys = existingVideos.map(url => {
+						const fileMatch = url.match(/^\/api\/files\/\d+\/([a-zA-Z0-9-]+)$/);
+						if (fileMatch) {
+							return `${id}/${fileMatch[1]}`;
+						}
+						return null;
+					}).filter(Boolean);
+					allR2KeysToDelete.push(...videoKeys);
 				}
 
 				if (allR2KeysToDelete.length > 0) {
@@ -378,7 +417,8 @@ export async function handleMergeNotes(request, env) {
 		const mergedPics = Array.from(new Set([...targetPics, ...rewrittenPics]));
 		const mergedVideos = Array.from(new Set([...targetVideos, ...rewrittenVideos]));
 
-		const mergedTimestamp = targetNote.updated_at;
+		// 合并后内容实际被修改，应以当前时间更新更新时间
+		const mergedTimestamp = Date.now();
 
 		// --- 数据库与 R2 操作 ---
 

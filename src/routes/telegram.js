@@ -266,8 +266,10 @@ export async function handleTelegramWebhook(request, env, secret) {
 				// --- 代理模式 ---
 				// 只存储 file_id, 不拉取文件内容
 				filesMeta.push({
-					type: 'telegram_document', // 特殊类型
+					id: document.file_id, // 供前端使用
+					type: 'telegram_document', // 特殊类型标记
 					file_id: document.file_id,
+					mime_type: document.mime_type || 'application/octet-stream',
 					name: document.file_name,
 					size: document.file_size
 				});

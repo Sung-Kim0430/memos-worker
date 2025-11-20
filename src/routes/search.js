@@ -2,6 +2,13 @@ import { NOTES_PER_PAGE } from '../constants.js';
 import { jsonResponse } from '../utils/response.js';
 import { handleNotesList } from './notes.js';
 
+function sanitizeFtsQuery(raw) {
+	if (!raw) return '';
+	// 移除会导致 FTS 语法错误的特殊字符，保留常见文字、数字、下划线及连字符
+	const cleaned = raw.replace(/["'()<>]/g, ' ').replace(/[^\p{L}\p{N}_\s-]/gu, ' ').trim();
+	return cleaned.split(/\s+/).filter(Boolean).join(' ');
+}
+
 export async function handleSearchRequest(request, env) {
 	const { searchParams } = new URL(request.url);
 	const query = searchParams.get('q');
@@ -11,8 +18,12 @@ export async function handleSearchRequest(request, env) {
 		// 直接调用 handleNotesList 并返回其结果，实现无缝回退
 		return handleNotesList(request, env);
 	}
+	const sanitized = sanitizeFtsQuery(query);
+	if (sanitized.length === 0) {
+		return jsonResponse({ notes: [], hasMore: false });
+	}
 	// 2. 保留对过短查询的检查
-	if (query.trim().length < 2) {
+	if (sanitized.length < 2) {
 		return jsonResponse({ notes: [], hasMore: false });
 	}
 
@@ -29,7 +40,7 @@ export async function handleSearchRequest(request, env) {
 	const db = env.DB;
 	try {
 		let whereClauses = ["notes_fts MATCH ?"];
-		let bindings = [query + '*'];
+		let bindings = [sanitized + '*'];
 		let joinClause = "";
 
 		if (isArchivedMode) {
@@ -82,7 +93,11 @@ export async function handleSearchRequest(request, env) {
 		return jsonResponse({ notes, hasMore });
 	} catch (e) {
 		console.error("Search Error:", e.message);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		const message = (e.message || '').toLowerCase().includes('fts')
+			? 'Invalid search query'
+			: 'Database Error';
+		const status = message === 'Invalid search query' ? 400 : 500;
+		return jsonResponse({ error: message, message: e.message }, status);
 	}
 }
 

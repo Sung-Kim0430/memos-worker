@@ -1,5 +1,49 @@
 import { jsonResponse } from '../utils/response.js';
 
+async function hashString(input) {
+	const data = new TextEncoder().encode(input);
+	const digest = await crypto.subtle.digest('SHA-256', data);
+	return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function getShareTtlSeconds(env, publicId) {
+	const list = await env.NOTES_KV.list({ prefix: `public_memo:${publicId}` });
+	const entry = list.keys.find(k => k.name === `public_memo:${publicId}`);
+	if (entry?.expiration) {
+		const ttl = Math.floor(entry.expiration - Date.now() / 1000);
+		return ttl > 0 ? ttl : 0;
+	}
+	return null;
+}
+
+async function cachePublicFile(env, shareId, privateUrl, kvPayload, ttlSeconds) {
+	const cacheKey = `public_file_cache:${shareId}:${await hashString(privateUrl)}`;
+	const existing = await env.NOTES_KV.get(cacheKey);
+	if (existing) {
+		return existing;
+	}
+	const newPublicId = crypto.randomUUID();
+	const options = {};
+	if (ttlSeconds && ttlSeconds > 0) {
+		options.expirationTtl = ttlSeconds;
+	}
+	await env.NOTES_KV.put(`public_file:${newPublicId}`, JSON.stringify(kvPayload), options);
+	await env.NOTES_KV.put(cacheKey, newPublicId, options);
+	return newPublicId;
+}
+
+async function cleanupPublicFilesForShare(env, shareId) {
+	const prefix = `public_file_cache:${shareId}:`;
+	const list = await env.NOTES_KV.list({ prefix });
+	for (const { name } of list.keys) {
+		const publicFileId = await env.NOTES_KV.get(name);
+		if (publicFileId) {
+			await env.NOTES_KV.delete(`public_file:${publicFileId}`);
+		}
+		await env.NOTES_KV.delete(name);
+	}
+}
+
 export async function handleShareFileRequest(noteId, fileId, request, env) {
 	const db = env.DB;
 	const id = parseInt(noteId);
@@ -124,6 +168,7 @@ export async function handleShareNoteRequest(noteId, request, env) {
 				env.NOTES_KV.put(publicMemoKey, memoData, options),
 				env.NOTES_KV.put(noteShareKey, body.publicId, options)
 			]);
+			await cleanupPublicFilesForShare(env, body.publicId);
 
 			return jsonResponse({ success: true, message: 'Expiration updated.' });
 
@@ -166,6 +211,7 @@ export async function handleUnshareNoteRequest(noteId, env) {
 				env.NOTES_KV.delete(`public_memo:${publicId}`),
 				env.NOTES_KV.delete(`note_share:${noteId}`)
 			]);
+			await cleanupPublicFilesForShare(env, publicId);
 		}
 		return jsonResponse({ success: true, message: 'Sharing has been revoked.' });
 	} catch (e) {
@@ -187,6 +233,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 		if (!note) {
 			return jsonResponse({ error: 'Shared note content not found' }, 404);
 		}
+		const shareTtlSeconds = await getShareTtlSeconds(env, publicId);
 
 		// --- 辅助函数：将任何私有 URL 转换为公开 URL ---
 		const createPublicUrlFor = async (privateUrl) => {
@@ -201,9 +248,8 @@ export async function handlePublicNoteRequest(publicId, env) {
 			}
 
 			if (kvPayload) {
-				const newPublicId = crypto.randomUUID();
-				await env.NOTES_KV.put(`public_file:${newPublicId}`, JSON.stringify(kvPayload));
-				return `/api/public/file/${newPublicId}`;
+				const publicFileId = await cachePublicFile(env, publicId, privateUrl, kvPayload, shareTtlSeconds);
+				return `/api/public/file/${publicFileId}`;
 			}
 
 			return privateUrl; // 如果不是私有链接，则原样返回
@@ -226,16 +272,22 @@ export async function handlePublicNoteRequest(publicId, env) {
 			try { files = JSON.parse(note.files); } catch (e) { /* an empty array is fine */ }
 		}
 		for (const file of files) {
+			if (file.type === 'telegram_document') {
+				const proxyId = file.file_id || file.id;
+				if (proxyId) {
+					file.public_url = `/api/tg-media-proxy/${proxyId}`;
+				}
+				continue;
+			}
 			if (file.id) { // 只处理有 id 的内部文件
 				const privateUrl = `/api/files/${note.id}/${file.id}`;
 				// 复用上面的逻辑，但这次我们知道所有元数据
-				const filePublicId = crypto.randomUUID();
-				await env.NOTES_KV.put(`public_file:${filePublicId}`, JSON.stringify({
+				const filePublicId = await cachePublicFile(env, publicId, privateUrl, {
 					noteId: note.id,
 					fileId: file.id,
 					fileName: file.name,
 					contentType: file.type
-				}));
+				}, shareTtlSeconds);
 				file.public_url = `/api/public/file/${filePublicId}`;
 			}
 		}
