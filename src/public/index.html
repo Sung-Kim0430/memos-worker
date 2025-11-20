@@ -3382,7 +3382,7 @@
 				<svg xmlns="http://www.w3.org/2000/svg" height="28px" viewBox="0 0 24 24" width="28px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
 				<span>Files</span>
 			</button>
-			<a href="/docs" target="_blank" class="sidebar-tab-btn" title="Open Docs">
+			<a href="/docs" id="docs-tab-btn" target="_blank" class="sidebar-tab-btn" title="Open Docs">
 				<svg xmlns="http://www.w3.org/2000/svg" height="28px" viewBox="0 0 24 24" width="28px" fill="currentColor"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
 				<span>Docs</span>
 			</a>
@@ -3924,7 +3924,12 @@
 				darkMode: 'Dark Mode',
 				systemMode: 'System',
 				note: 'note',
-				notes: 'notes'
+				notes: 'notes',
+				homeTabTitle: 'Home',
+				favoritesTabTitle: 'Favorites',
+				archiveTabTitle: 'Archive',
+				attachmentsTabTitle: 'Attachments',
+				openDocs: 'Open Docs'
 			},
 			messages: {
 				'Invalid username or password.': 'Invalid username or password.',
@@ -3999,7 +4004,12 @@
 				darkMode: '深色模式',
 				systemMode: '跟随系统',
 				note: '条笔记',
-				notes: '条笔记'
+				notes: '条笔记',
+				homeTabTitle: '主页',
+				favoritesTabTitle: '收藏',
+				archiveTabTitle: '归档',
+				attachmentsTabTitle: '附件',
+				openDocs: '打开文档'
 			},
 			messages: {
 				'Invalid username or password.': '用户名或密码错误。',
@@ -4198,7 +4208,12 @@
 		{ selector: '#wide-mode-toggle-btn', attr: 'title', key: 'toggleWide' },
 		{ selector: '#more-actions-btn', attr: 'title', key: 'moreOptions' },
 		{ selector: '#theme-color-btn', attr: 'title', key: 'themeColor' },
-		{ selector: '#share-link-close-btn', attr: 'text', key: 'close' }
+		{ selector: '#share-link-close-btn', attr: 'text', key: 'close' },
+		{ selector: '#home-tab-btn', attr: 'title', key: 'homeTabTitle' },
+		{ selector: '#favorites-tab-btn', attr: 'title', key: 'favoritesTabTitle' },
+		{ selector: '#archive-tab-btn', attr: 'title', key: 'archiveTabTitle' },
+		{ selector: '#attachments-tab-btn', attr: 'title', key: 'attachmentsTabTitle' },
+		{ selector: '#docs-tab-btn', attr: 'title', key: 'openDocs' }
 	];
 
 	function applyAttributeTranslations() {
