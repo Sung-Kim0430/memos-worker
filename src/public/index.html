@@ -774,29 +774,16 @@
 
 	/* User management */
 	#user-management-section {
-		background: var(--surface-color);
+		background: transparent;
 		border: none;
-		border-radius: 8px;
-		padding: 1.25rem;
-		margin-bottom: 1rem;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+		border-radius: 0;
+		padding: 0;
+		margin-bottom: 2rem;
+		box-shadow: none;
 	}
 
 	body[data-theme='dark'] #user-management-section {
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-	}
-
-	#user-management-section h4 {
-		color: var(--text-color);
-		font-size: 1rem;
-		font-weight: 600;
-		margin-bottom: 1rem;
-		padding-bottom: 0.5rem;
-		border-bottom: 1px solid var(--border-color);
-	}
-
-	body[data-theme='dark'] #user-management-section h4 {
-		border-bottom-color: rgba(255, 255, 255, 0.1);
+		box-shadow: none;
 	}
 
 	.setting-item.user-admin-form {
