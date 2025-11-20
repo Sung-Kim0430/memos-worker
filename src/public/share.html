@@ -5,17 +5,29 @@
 	<meta name='viewport' content='width=device-width, initial-scale=1.0'>
 	<script src='https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.12/marked.min.js'></script>
 	<title>Shared Memo</title>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap">
 	<link id='hljs-light-theme' rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'>
 	<link id='hljs-dark-theme' rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css' disabled>
 	<link rel='icon' type='image/png' href='/favicon.png'>
 </head>
 <style>
   :root {
-	--bg-color: #f4f7f9; --surface-color: #ffffff; --primary-color: #367cff; --text-color: #333; --text-secondary: #667;
-	--border-color: #e2e8f0; --border-radius-base: 6px; --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	--bg-color: #f5f7fb;
+	--surface-color: #ffffff;
+	--primary-color: #2f6df6;
+	--text-color: #1f2733;
+	--text-secondary: #4b5563;
+	--border-color: #e5e7eb;
+	--border-radius-base: 8px;
+	--bg-gradient: radial-gradient(circle at 20% 20%, rgba(47, 109, 246, 0.08), transparent 28%), radial-gradient(circle at 80% 0%, rgba(44, 152, 240, 0.08), transparent 26%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+	--font-family: 'Manrope', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   html[data-theme='dark'] {
-	--bg-color: #0a1222; --surface-color: #151f31; --text-color: #e2e8f0; --text-secondary: #a0aec0; --border-color: #4a5568;
+	--bg-color: #0a1222;
+	--surface-color: #151f31;
+	--text-color: #e2e8f0;
+	--text-secondary: #a0aec0;
+	--border-color: #4a5568;
   }
 
   body {
@@ -24,13 +36,11 @@
 	margin: 0;
 	padding: 2rem 1rem;
 	line-height: 1.6;
-	background-size: cover;
-	background-position: center;
-	background-attachment: fixed;
+	background: var(--bg-gradient, var(--bg-color));
 	min-height: 100vh;
 	box-sizing: border-box;
   }
-  html[data-theme='dark'] { background-image: url(/bg.jpg);  }
+  html[data-theme='dark'] { background: radial-gradient(circle at 20% 20%, rgba(47, 109, 246, 0.05), transparent 32%), linear-gradient(180deg, #0b1021 0%, #0f172a 100%);  }
   .wrapper { max-width: 732px; margin: 0 auto; }
   header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; color: var(--text-color); }
   header h3 { margin: 0; font-size: 1.5rem; }

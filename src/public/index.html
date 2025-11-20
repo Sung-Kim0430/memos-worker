@@ -7,6 +7,7 @@
 	<title>MEMOS-WORKER</title>
 	<script src='https://unpkg.com/turndown@7.2.1/dist/turndown.js'></script>
 	<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js'></script>
+	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap">
 	<link id='hljs-light-theme' rel='stylesheet'
 				href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'>
 	<link id='hljs-dark-theme' rel='stylesheet'
@@ -15,18 +16,19 @@
 </head>
 <style>
   :root {
-	--bg-color: #f4f7f9;
+	--bg-color: #f5f7fb;
 	--surface-color: #ffffff;
-	--primary-color: #367cff;
-	--primary-hover: #2a63cc;
-	--text-color: #333;
-	--text-secondary: #667;
-	--border-color: #e2e8f0;
+	--primary-color: #2f6df6;
+	--primary-hover: #1f54c4;
+	--text-color: #1f2733;
+	--text-secondary: #4b5563;
+	--border-color: #e5e7eb;
 	--danger-color: #e53e3e;
-	--accent-color: #38b2ac;
-	--accent-hover: #2c918b;
-	--border-radius-base: 6px;
-	--font-family: -apple-system, 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', sans-serif;
+	--accent-color: #2f6df6;
+	--accent-hover: #1f54c4;
+	--border-radius-base: 8px;
+	--bg-gradient: radial-gradient(circle at 20% 20%, rgba(47, 109, 246, 0.08), transparent 28%), radial-gradient(circle at 80% 0%, rgba(44, 152, 240, 0.08), transparent 26%), linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+	--font-family: 'Manrope', -apple-system, 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', sans-serif;
   }
   button, .btn, .auth-form input, textarea, #note-form, .note, .sidebar-content {
 	border-radius: var(--border-radius-base);
@@ -174,7 +176,7 @@
 	gap: 1.5rem;
 	max-width: 1920px;
 	margin: 0 auto;
-	padding: 2rem 2rem 1rem;
+	padding: 1.75rem clamp(1rem, 2vw, 2.25rem) 1rem;
   }
   #right-sidebar {
 	position: fixed;
@@ -345,7 +347,7 @@
   }
   @media (max-width: 600px) {
 	#app-layout-container {
-		padding: 2rem .5rem 0.5rem;
+		padding: 1.25rem 0.75rem 0.5rem;
 	}
 	#main-content-area .container {
 		width: 100%;
@@ -358,6 +360,7 @@
   @media (max-width: 1250px) {
 	#app-layout-container {
 	  grid-template-columns: 1fr !important;
+	  padding: 1.25rem 1rem 0.75rem;
 	}
 
 	#left-sidebar {
@@ -366,9 +369,8 @@
 
 	/* 在宽屏模式下，如果右侧栏存在，则中间栏依然受限 */
 	#app-layout-container.full-width-mode #main-content-area .container {
-	  max-width: 85%;
-	max-width: 1400px !important;
-  }
+	  max-width: 100%;
+	}
   }
 
   @media (max-width: 1150px) {
@@ -422,7 +424,7 @@
 
   body {
 	font-family: var(--font-family);
-	background-color: var(--bg-color);
+	background: var(--bg-gradient, var(--bg-color));
 	color: var(--text-color);
 	margin: 0;
 	padding: 0rem 0rem;
@@ -1648,7 +1650,7 @@
   #app-layout-container.full-width-mode {
 	grid-template-columns: 1fr;
 	gap: 0;
-	padding: 2rem 1rem;
+	padding: 1.5rem 1rem;
 	position: relative;
   }
   #app-layout-container.full-width-mode #left-sidebar {
