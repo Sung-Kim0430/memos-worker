@@ -296,6 +296,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				if (!canModify) {
 					return jsonResponse({ error: 'Forbidden' }, 403);
 				}
+				try {
 				const originalUpdatedAt = existingNote.updated_at;
 				let lastKnownUpdatedAt = originalUpdatedAt;
 				const formData = await request.formData();
