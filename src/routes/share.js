@@ -44,7 +44,10 @@ async function cleanupPublicFilesForShare(env, shareId) {
 	}
 }
 
-export async function handleShareFileRequest(noteId, fileId, request, env) {
+export async function handleShareFileRequest(noteId, fileId, request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
@@ -52,9 +55,12 @@ export async function handleShareFileRequest(noteId, fileId, request, env) {
 	}
 
 	try {
-		const note = await db.prepare("SELECT files FROM notes WHERE id = ?").bind(id).first();
+		const note = await db.prepare("SELECT files, owner_id FROM notes WHERE id = ?").bind(id).first();
 		if (!note) {
 			return jsonResponse({ error: 'Note not found' }, 404);
+		}
+		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
+			return jsonResponse({ error: 'Forbidden' }, 403);
 		}
 
 		let files = [];
@@ -107,6 +113,29 @@ export async function handlePublicFileRequest(publicId, request, env) {
 	let fileName;
 	let contentType;
 
+	if (kvData.telegramProxyId) {
+		const botToken = env.TELEGRAM_BOT_TOKEN;
+		if (!botToken) {
+			return new Response('Bot not configured', { status: 500 });
+		}
+		try {
+			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${kvData.telegramProxyId}`;
+			const fileInfoRes = await fetch(getFileUrl);
+			const fileInfo = await fileInfoRes.json();
+
+			if (!fileInfo.ok) {
+				console.error(`Telegram getFile API error for file_id ${kvData.telegramProxyId}:`, fileInfo.description);
+				return new Response(`Telegram API error: ${fileInfo.description}`, { status: 502 });
+			}
+
+			const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+			return Response.redirect(temporaryDownloadUrl, 302);
+		} catch (e) {
+			console.error("Telegram Public Proxy Error:", e.message);
+			return new Response('Failed to proxy Telegram media', { status: 500 });
+		}
+	}
+
 	if (kvData.standaloneImageId) {
 		// 1. 是独立上传的图片
 		object = await env.NOTES_R2_BUCKET.get(`uploads/${kvData.standaloneImageId}`);
@@ -143,8 +172,18 @@ export async function handlePublicFileRequest(publicId, request, env) {
 	return new Response(object.body, { headers });
 }
 
-export async function handleShareNoteRequest(noteId, request, env) {
+export async function handleShareNoteRequest(noteId, request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	try {
+		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
+		if (!note) {
+			return jsonResponse({ error: 'Note not found' }, 404);
+		}
+		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
+			return jsonResponse({ error: 'Forbidden' }, 403);
+		}
 		// 1) 检查 request body 中是否有 "expirationTtl" 字段
 		const bodyText = await request.text();
 		const body = bodyText ? JSON.parse(bodyText) : {};
@@ -203,8 +242,18 @@ export async function handleShareNoteRequest(noteId, request, env) {
 	}
 }
 
-export async function handleUnshareNoteRequest(noteId, env) {
+export async function handleUnshareNoteRequest(noteId, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	try {
+		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
+		if (!note) {
+			return jsonResponse({ error: 'Note not found' }, 404);
+		}
+		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
+			return jsonResponse({ error: 'Forbidden' }, 403);
+		}
 		const publicId = await env.NOTES_KV.get(`note_share:${noteId}`);
 		if (publicId) {
 			await Promise.all([
@@ -236,16 +285,19 @@ export async function handlePublicNoteRequest(publicId, env) {
 		const shareTtlSeconds = await getShareTtlSeconds(env, publicId);
 
 		// --- 辅助函数：将任何私有 URL 转换为公开 URL ---
-		const createPublicUrlFor = async (privateUrl) => {
-			const fileMatch = privateUrl.match(/^\/api\/files\/(\d+)\/([a-zA-Z0-9-]+)$/);
-			const imageMatch = privateUrl.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
+			const createPublicUrlFor = async (privateUrl) => {
+				const fileMatch = privateUrl.match(/^\/api\/files\/(\d+)\/([a-zA-Z0-9-]+)$/);
+				const imageMatch = privateUrl.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
+				const tgProxyMatch = privateUrl.match(/^\/api\/tg-media-proxy\/([a-zA-Z0-9_-]+)$/);
 
-			let kvPayload = null;
-			if (fileMatch) {
-				kvPayload = { noteId: parseInt(fileMatch[1]), fileId: fileMatch[2], fileName: 'media' };
-			} else if (imageMatch) {
-				kvPayload = { standaloneImageId: imageMatch[1], fileName: 'image.png' };
-			}
+				let kvPayload = null;
+				if (fileMatch) {
+					kvPayload = { noteId: parseInt(fileMatch[1]), fileId: fileMatch[2], fileName: 'media' };
+				} else if (imageMatch) {
+					kvPayload = { standaloneImageId: imageMatch[1], fileName: 'image.png' };
+				} else if (tgProxyMatch) {
+					kvPayload = { telegramProxyId: tgProxyMatch[1], fileName: 'tg-media', contentType: 'application/octet-stream' };
+				}
 
 			if (kvPayload) {
 				const publicFileId = await cachePublicFile(env, publicId, privateUrl, kvPayload, shareTtlSeconds);
@@ -256,12 +308,12 @@ export async function handlePublicNoteRequest(publicId, env) {
 		};
 
 		// 1. 处理笔记正文 `content` 中的内联图片和视频
-		const urlRegex = /(\/api\/(?:files|images)\/[a-zA-Z0-9\/-]+)/g;
-		const matches = [...note.content.matchAll(urlRegex)];
-		let processedContent = note.content;
-		for (const match of matches) {
-			const privateUrl = match[0];
-			const publicUrl = await createPublicUrlFor(privateUrl);
+			const urlRegex = /(\/api\/(?:files|images|tg-media-proxy)\/[a-zA-Z0-9\/_-]+)/g;
+			const matches = [...note.content.matchAll(urlRegex)];
+			let processedContent = note.content;
+			for (const match of matches) {
+				const privateUrl = match[0];
+				const publicUrl = await createPublicUrlFor(privateUrl);
 			processedContent = processedContent.replace(privateUrl, publicUrl);
 		}
 		note.content = processedContent;
@@ -275,7 +327,12 @@ export async function handlePublicNoteRequest(publicId, env) {
 			if (file.type === 'telegram_document') {
 				const proxyId = file.file_id || file.id;
 				if (proxyId) {
-					file.public_url = `/api/tg-media-proxy/${proxyId}`;
+					const publicFileId = await cachePublicFile(env, publicId, `/api/tg-media-proxy/${proxyId}`, {
+						telegramProxyId: proxyId,
+						fileName: file.name || 'tg-file',
+						contentType: file.mime_type || 'application/octet-stream'
+					}, shareTtlSeconds);
+					file.public_url = `/api/public/file/${publicFileId}`;
 				}
 				continue;
 			}

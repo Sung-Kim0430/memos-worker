@@ -1,17 +1,34 @@
 import { jsonResponse } from '../utils/response.js';
 
-export async function handleStatsRequest(request, env) {
+function accessWhere(session, alias = '') {
+	const prefix = alias ? `${alias}.` : '';
+	return session?.isAdmin
+		? { clause: '1=1', binds: [] }
+		: { clause: `(${prefix}owner_id = ? OR ${prefix}visibility IN ('users','public'))`, binds: [session?.id || ''] };
+}
+
+export async function handleStatsRequest(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	try {
-		const memosCountQuery = db.prepare("SELECT COUNT(*) as total FROM notes");
-		const tagsCountQuery = db.prepare("SELECT COUNT(DISTINCT tag_id) as total FROM note_tags");
-		const oldestNoteQuery = db.prepare("SELECT MIN(updated_at) as oldest_ts FROM notes");
+		const access = accessWhere(session);
+		const memosCountQuery = db.prepare(`SELECT COUNT(*) as total FROM notes WHERE ${access.clause}`);
+		const tagAccess = accessWhere(session, 'n');
+		const tagsCountQuery = db.prepare(`
+			SELECT COUNT(DISTINCT nt.tag_id) as total
+			FROM note_tags nt
+			JOIN notes n ON nt.note_id = n.id
+			WHERE ${tagAccess.clause}
+		`);
+		const oldestNoteQuery = db.prepare(`SELECT MIN(updated_at) as oldest_ts FROM notes WHERE ${access.clause}`);
 
 		// 使用 Promise.all 并行执行所有查询，以获得最佳性能
 		const [memosResult, tagsResult, oldestNoteResult] = await Promise.all([
-			memosCountQuery.first(),
-			tagsCountQuery.first(),
-			oldestNoteQuery.first()
+			memosCountQuery.bind(...access.binds).first(),
+			tagsCountQuery.bind(...tagAccess.binds).first(),
+			oldestNoteQuery.bind(...access.binds).first()
 		]);
 
 		// 组装最终的 JSON 响应
@@ -27,16 +44,17 @@ export async function handleStatsRequest(request, env) {
 	}
 }
 
-export async function handleTimelineRequest(request, env) {
+export async function handleTimelineRequest(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	try {
 		const { searchParams } = new URL(request.url);
 		const timezone = searchParams.get('timezone') || 'UTC';
-		// D1 不直接支持 strftime 或 to_char, 我们需要获取所有创建时间，然后在 JS 中处理
-		// 注意：如果笔记数量巨大 (几十万条)，这个查询可能会有性能问题。
-		// 对于几千到几万条笔记，这是完全可以接受的。
-		const stmt = db.prepare("SELECT updated_at FROM notes ORDER BY updated_at DESC");
-		const { results } = await stmt.all();
+		const access = accessWhere(session);
+		const stmt = db.prepare(`SELECT updated_at FROM notes WHERE ${access.clause} ORDER BY updated_at DESC`);
+		const { results } = await stmt.bind(...access.binds).all();
 		if (!results) {
 			return jsonResponse({});
 		}

@@ -9,14 +9,23 @@ function sanitizeFtsQuery(raw) {
 	return cleaned.split(/\s+/).filter(Boolean).join(' ');
 }
 
-export async function handleSearchRequest(request, env) {
+function appendAccess(whereClauses, bindings, session) {
+	if (session?.isAdmin) return;
+	whereClauses.push("(n.owner_id = ? OR n.visibility IN ('users','public'))");
+	bindings.push(session?.id || '');
+}
+
+export async function handleSearchRequest(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const { searchParams } = new URL(request.url);
 	const query = searchParams.get('q');
 
 	// 1. 如果搜索查询为空或只包含空格，则将请求委托给 handleNotesList
 	if (!query || query.trim().length === 0) {
 		// 直接调用 handleNotesList 并返回其结果，实现无缝回退
-		return handleNotesList(request, env);
+		return handleNotesList(request, env, session);
 	}
 	const sanitized = sanitizeFtsQuery(query);
 	if (sanitized.length === 0) {
@@ -42,6 +51,8 @@ export async function handleSearchRequest(request, env) {
 		let whereClauses = ["notes_fts MATCH ?"];
 		let bindings = [sanitized + '*'];
 		let joinClause = "";
+
+		appendAccess(whereClauses, bindings, session);
 
 		if (isArchivedMode) {
 			whereClauses.push("n.is_archived = 1");
@@ -101,20 +112,26 @@ export async function handleSearchRequest(request, env) {
 	}
 }
 
-export async function handleTagsList(request, env) {
+export async function handleTagsList(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	try {
 		// 使用 LEFT JOIN 和 COUNT 来统计每个标签关联的笔记数量
 		// ORDER BY count DESC, name ASC 实现了按数量降序、名称升序的排序
+		const whereClause = session?.isAdmin ? '1=1' : "(n.owner_id = ? OR n.visibility IN ('users','public'))";
 		const stmt = db.prepare(`
             SELECT t.name, COUNT(nt.note_id) as count
             FROM tags t
             LEFT JOIN note_tags nt ON t.id = nt.tag_id
+            LEFT JOIN notes n ON nt.note_id = n.id
+            WHERE ${whereClause}
             GROUP BY t.id, t.name
             HAVING count > 0 -- 只返回被使用过的标签
             ORDER BY count DESC, t.name ASC
         `);
-		const { results } = await stmt.all();
+		const { results } = await stmt.bind(...(session?.isAdmin ? [] : [session?.id || ''])).all();
 		return jsonResponse(results);
 	} catch (e) {
 		console.error("Tags List Error:", e.message);

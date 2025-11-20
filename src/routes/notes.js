@@ -3,7 +3,31 @@ import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
 import { jsonResponse } from '../utils/response.js';
 import { processNoteTags } from '../utils/tags.js';
 
-export async function handleNotesList(request, env) {
+function canAccessNoteRecord(note, session) {
+	if (!note) return false;
+	if (session?.isAdmin) return true;
+	if (note.owner_id && session?.id === note.owner_id) return true;
+	if (note.visibility === 'users' && session) return true;
+	if (note.visibility === 'public') return true;
+	return false;
+}
+
+function appendAccessConditions(whereClauses, bindings, session) {
+	if (session?.isAdmin) {
+		return;
+	}
+	whereClauses.push("(n.owner_id = ? OR n.visibility IN ('users','public'))");
+	bindings.push(session?.id || '');
+}
+
+function canModifyNote(note, session) {
+	return !!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id));
+}
+
+export async function handleNotesList(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 
 	try {
@@ -23,6 +47,8 @@ export async function handleNotesList(request, env) {
 				let whereClauses = [];
 				let bindings = [];
 				let joinClause = "";
+
+				appendAccessConditions(whereClauses, bindings, session);
 
 				if (isArchivedMode) {
 					whereClauses.push("n.is_archived = 1");
@@ -81,13 +107,14 @@ export async function handleNotesList(request, env) {
 			}
 
 			case 'POST': {
-				const formData = await request.formData();
-				const content = formData.get('content')?.toString() || '';
-				const files = formData.getAll('file');
+					const formData = await request.formData();
+					const content = formData.get('content')?.toString() || '';
+					const files = formData.getAll('file');
+					const requestedVisibility = formData.get('visibility');
 
-				if (!content.trim() && files.every(f => !f.name)) {
-					return jsonResponse({ error: 'Content or file is required.' }, 400);
-				}
+					if (!content.trim() && files.every(f => !f.name)) {
+						return jsonResponse({ error: 'Content or file is required.' }, 400);
+					}
 
 				const now = Date.now();
 				const filesMeta = [];
@@ -96,13 +123,16 @@ export async function handleNotesList(request, env) {
 				const picUrls = extractImageUrls(content);
 				const videoUrls = extractVideoUrls(content);
 
-				// 【核心修改】在 INSERT 语句中加入新的 pics 字段
-				const insertStmt = db.prepare(
-					"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics, videos) VALUES (?, ?, 0, ?, ?, ?, ?) RETURNING id"
-				);
-				// 先用一个空的 files 数组插入
-				// 【核心修改】将提取出的 picUrls 绑定到 SQL 语句中
-				const { id: noteId } = await insertStmt.bind(content, "[]", now, now, picUrls, videoUrls).first();
+					// 【核心修改】在 INSERT 语句中加入新的 pics 与 owner/visibility
+					const insertStmt = db.prepare(
+						"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics, videos, owner_id, visibility) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)"
+					);
+					// 先用一个空的 files 数组插入
+					// 【核心修改】将提取出的 picUrls 绑定到 SQL 语句中
+					const ownerId = session?.id || null;
+					const allowedVisibility = ['private', 'users', 'public'];
+					const visibility = allowedVisibility.includes(requestedVisibility) ? requestedVisibility : 'private';
+					const { id: noteId } = await insertStmt.bind(content, "[]", now, now, picUrls, videoUrls, ownerId, visibility).first();
 				if (!noteId) {
 					throw new Error("Failed to create note and get ID.");
 				}
@@ -123,14 +153,16 @@ export async function handleNotesList(request, env) {
 					await updateFilesStmt.bind(JSON.stringify(filesMeta), noteId).run();
 				}
 
-				await processNoteTags(db, noteId, content);
-				// 获取完整的笔记返回给前端
-				const newNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(noteId).first();
-				if (typeof newNote.files === 'string') {
-					newNote.files = JSON.parse(newNote.files);
-				}
+					await processNoteTags(db, noteId, content);
+					// 获取完整的笔记返回给前端
+					const newNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(noteId).first();
+					if (typeof newNote.files === 'string') {
+						newNote.files = JSON.parse(newNote.files);
+					}
+					newNote.owner_id = ownerId;
+					newNote.visibility = visibility;
 
-				return jsonResponse(newNote, 201);
+					return jsonResponse(newNote, 201);
 			}
 		}
 	} catch (e) {
@@ -139,7 +171,10 @@ export async function handleNotesList(request, env) {
 	}
 }
 
-export async function handleNoteDetail(request, noteId, env) {
+export async function handleNoteDetail(request, noteId, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
@@ -152,6 +187,17 @@ export async function handleNoteDetail(request, noteId, env) {
 		if (!existingNote) {
 			return new Response('Not Found', { status: 404 });
 		}
+		if (!existingNote.visibility) {
+			existingNote.visibility = 'private';
+		}
+		if (!existingNote.owner_id && session?.id) {
+			await db.prepare("UPDATE notes SET owner_id = ? WHERE id = ?").bind(session.id, id).run();
+			existingNote.owner_id = session.id;
+		}
+		if (!canAccessNoteRecord(existingNote, session)) {
+			return jsonResponse({ error: 'Forbidden' }, 403);
+		}
+		const canModify = canModifyNote(existingNote, session);
 		// 确保 files/pics/videos 字段是数组
 		try {
 			if (typeof existingNote.files === 'string') {
@@ -173,10 +219,13 @@ export async function handleNoteDetail(request, noteId, env) {
 			try { existingVideos = JSON.parse(existingNote.videos); } catch (e) { existingVideos = []; }
 		}
 
-		switch (request.method) {
-				case 'PUT': {
-					const formData = await request.formData();
-					const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
+			switch (request.method) {
+					case 'PUT': {
+						if (!canModify) {
+							return jsonResponse({ error: 'Forbidden' }, 403);
+						}
+						const formData = await request.formData();
+						const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
 
 					if (formData.has('content')) {
 						const content = formData.get('content')?.toString() ?? existingNote.content;
@@ -245,7 +294,7 @@ export async function handleNoteDetail(request, noteId, env) {
 						);
 						await stmt.bind(content, JSON.stringify(currentFiles), newTimestamp, picUrls, videoUrls, id).run();
 						await processNoteTags(db, id, content);
-					}
+				}
 
 				if (formData.has('isPinned')) { // --- 这是置顶状态的更新 ---
 					const isPinned = formData.get('isPinned') === 'true' ? 1 : 0;
@@ -262,16 +311,32 @@ export async function handleNoteDetail(request, noteId, env) {
 					const stmt = db.prepare("UPDATE notes SET is_archived = ? WHERE id = ?");
 					await stmt.bind(isArchived, id).run();
 				}
+				if (formData.has('visibility')) {
+					const vis = formData.get('visibility');
+					const allowed = ['private', 'users', 'public'];
+					if (allowed.includes(vis)) {
+						await db.prepare("UPDATE notes SET visibility = ? WHERE id = ?").bind(vis, id).run();
+					}
+				}
 
 				const updatedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(id).first();
 				if (typeof updatedNote.files === 'string') {
 					updatedNote.files = JSON.parse(updatedNote.files);
 				}
+				if (typeof updatedNote.pics === 'string') {
+					try { updatedNote.pics = JSON.parse(updatedNote.pics); } catch (e) { /* ignore */ }
+				}
+				if (typeof updatedNote.videos === 'string') {
+					try { updatedNote.videos = JSON.parse(updatedNote.videos); } catch (e) { /* ignore */ }
+				}
 				return jsonResponse(updatedNote);
 			}
 
-			case 'DELETE': {
-				let allR2KeysToDelete = [];
+				case 'DELETE': {
+					if (!canModify) {
+						return jsonResponse({ error: 'Forbidden' }, 403);
+					}
+					let allR2KeysToDelete = [];
 
 				if (existingNote.files && existingNote.files.length > 0) {
 					const attachmentKeys = existingNote.files
@@ -321,7 +386,10 @@ export async function handleNoteDetail(request, noteId, env) {
 	}
 }
 
-export async function handleMergeNotes(request, env) {
+export async function handleMergeNotes(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	const bucket = env.NOTES_R2_BUCKET;
 	try {
@@ -336,9 +404,13 @@ export async function handleMergeNotes(request, env) {
 			db.prepare("SELECT * FROM notes WHERE id = ?").bind(targetNoteId).first(),
 		]);
 
-		if (!sourceNote || !targetNote) {
-			return jsonResponse({ error: 'One or both notes not found.' }, 404);
-		}
+	if (!sourceNote || !targetNote) {
+		return jsonResponse({ error: 'One or both notes not found.' }, 404);
+	}
+
+	if (!(canModifyNote(sourceNote, session) && canModifyNote(targetNote, session))) {
+		return jsonResponse({ error: 'Forbidden' }, 403);
+	}
 
 		// Helpers
 		const parseJsonArray = (value) => {

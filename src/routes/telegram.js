@@ -1,4 +1,19 @@
 import { processNoteTags } from '../utils/tags.js';
+import { ensureAdminUser } from './auth.js';
+
+function parseAuthorizedIds(raw) {
+	if (!raw) return [];
+	return raw.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+async function resolveTelegramUser(env, telegramUserId) {
+	if (!telegramUserId) {
+		return ensureAdminUser(env);
+	}
+	const existing = await env.DB.prepare("SELECT * FROM users WHERE telegram_user_id = ?").bind(telegramUserId.toString()).first();
+	if (existing) return existing;
+	return ensureAdminUser(env);
+}
 
 export function telegramEntitiesToMarkdown(text, entities = []) {
 	if (!entities || entities.length === 0) {
@@ -88,7 +103,10 @@ export function telegramEntitiesToMarkdown(text, entities = []) {
 	return result;
 }
 
-export async function handleTelegramProxy(request, env) {
+export async function handleTelegramProxy(request, env, session) {
+	if (!session) {
+		return new Response('Unauthorized', { status: 401 });
+	}
 	const { pathname } = new URL(request.url);
 	const match = pathname.match(/^\/api\/tg-media-proxy\/([^\/]+)$/);
 
@@ -140,16 +158,26 @@ export async function handleTelegramWebhook(request, env, secret) {
 			return new Response('OK', { status: 200 });
 		}
 
-		const authorizedIdsStr = env.AUTHORIZED_TELEGRAM_IDS;
-		if (!authorizedIdsStr) {
+		const authorizedEntries = parseAuthorizedIds(env.AUTHORIZED_TELEGRAM_IDS);
+		if (authorizedEntries.length === 0) {
 			console.error("安全警告：AUTHORIZED_TELEGRAM_IDS 环境变量未设置。");
 			return new Response('OK', { status: 200 });
 		}
 		chatId = message.chat.id;
 		const senderId = message.from?.id;
-		if (!senderId || authorizedIdsStr != senderId.toString()) {
+		const senderIdStr = senderId?.toString() || '';
+		const mappingEntry = authorizedEntries.find(entry => entry.split(':')[0] === senderIdStr);
+		if (!mappingEntry) {
 			console.log(`已阻止来自未授权或未知用户 ${senderId || ''} 的请求。`);
 			return new Response('OK', { status: 200 });
+		}
+		const mappedUsername = mappingEntry.split(':')[1];
+		let ownerUser = null;
+		if (mappedUsername) {
+			ownerUser = await env.DB.prepare("SELECT * FROM users WHERE username = ?").bind(mappedUsername).first();
+		}
+		if (!ownerUser) {
+			ownerUser = await resolveTelegramUser(env, senderIdStr);
 		}
 
 		const db = env.DB;
@@ -201,8 +229,8 @@ export async function handleTelegramWebhook(request, env, secret) {
 
 		// 1) 创建一个空内容的 note 占位
 		const now = Date.now();
-		const insertStmt = db.prepare("INSERT INTO notes (content, files, is_pinned, created_at, updated_at) VALUES (?, ?, 0, ?, ?) RETURNING id");
-		const { id: noteId } = await insertStmt.bind("", "[]", now, now).first();
+		const insertStmt = db.prepare("INSERT INTO notes (content, files, is_pinned, created_at, updated_at, owner_id, visibility, pics, videos) VALUES (?, ?, 0, ?, ?, ?, ?, '[]', '[]') RETURNING id");
+		const { id: noteId } = await insertStmt.bind("", "[]", now, now, ownerUser.id, 'private').first();
 
 		const filesMeta = [];
 		const picObjects = [];

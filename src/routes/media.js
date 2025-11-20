@@ -1,6 +1,9 @@
 import { jsonResponse } from '../utils/response.js';
 
-export async function handleStandaloneImageUpload(request, env) {
+export async function handleStandaloneImageUpload(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	try {
 		const formData = await request.formData();
 		const file = formData.get('file');
@@ -70,7 +73,10 @@ export async function handleImgurProxyUpload(request, env) {
 	}
 }
 
-export async function handleGetAllAttachments(request, env) {
+export async function handleGetAllAttachments(request, env, session) {
+	if (!session) {
+		return jsonResponse({ error: 'Unauthorized' }, 401);
+	}
 	const db = env.DB;
 	const url = new URL(request.url);
 	const page = parseInt(url.searchParams.get('page') || '1');
@@ -78,6 +84,7 @@ export async function handleGetAllAttachments(request, env) {
 	const offset = (page - 1) * limit;
 
 	try {
+		const accessWhere = session?.isAdmin ? '1=1' : "(n.owner_id = ? OR n.visibility IN ('users','public'))";
 		// 使用 Common Table Expression (CTE) 和 UNION ALL 来构建一个高效的单一查询
 		const query = `
             WITH combined_attachments AS (
@@ -85,7 +92,7 @@ export async function handleGetAllAttachments(request, env) {
                     n.id AS noteId, n.updated_at AS timestamp, 'image' AS type,
                     json_each.value AS url, NULL AS name, NULL AS size, NULL AS id
                 FROM notes n, json_each(n.pics) AS json_each
-                WHERE json_valid(n.pics) AND json_array_length(n.pics) > 0
+                WHERE json_valid(n.pics) AND json_array_length(n.pics) > 0 AND ${accessWhere}
 
                 UNION ALL
 
@@ -93,7 +100,7 @@ export async function handleGetAllAttachments(request, env) {
                     n.id AS noteId, n.updated_at AS timestamp, 'video' AS type,
                     json_each.value AS url, NULL AS name, NULL AS size, NULL AS id
                 FROM notes n, json_each(n.videos) AS json_each
-                WHERE json_valid(n.videos) AND json_array_length(n.videos) > 0
+                WHERE json_valid(n.videos) AND json_array_length(n.videos) > 0 AND ${accessWhere}
 
                 UNION ALL
 
@@ -103,7 +110,7 @@ export async function handleGetAllAttachments(request, env) {
                     json_extract(json_each.value, '$.size') AS size,
                     json_extract(json_each.value, '$.id') AS id
                 FROM notes n, json_each(n.files) AS json_each
-                WHERE json_valid(n.files) AND json_array_length(n.files) > 0
+                WHERE json_valid(n.files) AND json_array_length(n.files) > 0 AND ${accessWhere}
             )
             SELECT * FROM combined_attachments
             ORDER BY timestamp DESC
@@ -112,7 +119,13 @@ export async function handleGetAllAttachments(request, env) {
 
 		// 为了判断是否有更多页面，我们请求 limit + 1 条记录
 		const stmt = db.prepare(query);
-		const { results: attachmentsPlusOne } = await stmt.bind(limit + 1, offset).all();
+		const { results: attachmentsPlusOne } = await stmt.bind(
+			...(session?.isAdmin ? [] : [session?.id || '']),
+			...(session?.isAdmin ? [] : [session?.id || '']),
+			...(session?.isAdmin ? [] : [session?.id || '']),
+			limit + 1,
+			offset
+		).all();
 
 		const hasMore = attachmentsPlusOne.length > limit;
 		const attachments = attachmentsPlusOne.slice(0, limit);

@@ -1,4 +1,4 @@
-import { handleLogin, handleLogout, isSessionAuthenticated } from './routes/auth.js';
+import { handleLogin, handleLogout, isSessionAuthenticated, handleRegister, handleUsersList, handleUserUpdate, handleUserDelete } from './routes/auth.js';
 import { handleDocsNodeCreate, handleDocsNodeDelete, handleDocsNodeGet, handleDocsNodeMove, handleDocsNodeRename, handleDocsNodeUpdate, handleDocsTree } from './routes/docs.js';
 import { handleFileRequest } from './routes/files.js';
 import { handleGetAllAttachments, handleImgurProxyUpload, handleServeStandaloneImage, handleStandaloneImageUpload } from './routes/media.js';
@@ -37,11 +37,6 @@ async function handlePublicRoutes(pathname, request, env) {
 		return handlePublicFileRequest(publicFileMatch[1], request, env);
 	}
 
-	const tgProxyMatch = pathname.match(/^\/api\/tg-media-proxy\/([^\/]+)$/);
-	if (tgProxyMatch) {
-		return handleTelegramProxy(request, env);
-	}
-
 	const telegramMatch = pathname.match(/^\/api\/telegram_webhook\/([^\/]+)$/);
 	if (request.method === 'POST' && telegramMatch) {
 		return handleTelegramWebhook(request, env, telegramMatch[1]);
@@ -53,30 +48,33 @@ async function handlePublicRoutes(pathname, request, env) {
 	if (request.method === 'POST' && pathname === '/api/logout') {
 		return handleLogout(request, env);
 	}
+	if (request.method === 'POST' && pathname === '/api/register') {
+		return handleRegister(request, env, null);
+	}
 
 	return null;
 }
 
-async function handleAuthenticatedRoutes(pathname, request, env) {
+async function handleAuthenticatedRoutes(pathname, request, env, session) {
 	if (request.method === 'POST' && pathname === '/api/notes/merge') {
-		return handleMergeNotes(request, env);
+		return handleMergeNotes(request, env, session);
 	}
 
 	const shareNoteMatch = pathname.match(/^\/api\/notes\/(\d+)\/share$/);
 	if (shareNoteMatch) {
 		const [, noteId] = shareNoteMatch;
 		if (request.method === 'POST') {
-			return handleShareNoteRequest(noteId, request, env);
+			return handleShareNoteRequest(noteId, request, env, session);
 		}
 		if (request.method === 'DELETE') {
-			return handleUnshareNoteRequest(noteId, env);
+			return handleUnshareNoteRequest(noteId, env, session);
 		}
 	}
 
 	const shareFileMatch = pathname.match(/^\/api\/notes\/(\d+)\/files\/([a-zA-Z0-9-]+)\/share$/);
 	if (shareFileMatch && request.method === 'POST') {
 		const [, noteId, fileId] = shareFileMatch;
-		return handleShareFileRequest(noteId, fileId, request, env);
+		return handleShareFileRequest(noteId, fileId, request, env, session);
 	}
 
 	if (pathname.startsWith('/api/docs')) {
@@ -121,7 +119,7 @@ async function handleAuthenticatedRoutes(pathname, request, env) {
 	}
 
 	if (request.method === 'POST' && pathname === '/api/upload/image') {
-		return handleStandaloneImageUpload(request, env);
+		return handleStandaloneImageUpload(request, env, session);
 	}
 	const imageMatch = pathname.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
 	if (imageMatch) {
@@ -130,35 +128,59 @@ async function handleAuthenticatedRoutes(pathname, request, env) {
 	}
 
 	if (request.method === 'GET' && pathname === '/api/attachments') {
-		return handleGetAllAttachments(request, env);
+		return handleGetAllAttachments(request, env, session);
 	}
 	if (request.method === 'POST' && pathname === '/api/proxy/upload/imgur') {
 		return handleImgurProxyUpload(request, env);
 	}
 	if (pathname === '/api/stats') {
-		return handleStatsRequest(request, env);
+		return handleStatsRequest(request, env, session);
 	}
 	if (pathname === '/api/tags') {
-		return handleTagsList(request, env);
+		return handleTagsList(request, env, session);
 	}
 	const fileMatch = pathname.match(/^\/api\/files\/([^\/]+)\/([^\/]+)$/);
 	if (fileMatch) {
 		const [, noteId, fileId] = fileMatch;
-		return handleFileRequest(noteId, fileId, request, env);
+		return handleFileRequest(noteId, fileId, request, env, session);
+	}
+	const tgProxyMatch = pathname.match(/^\/api\/tg-media-proxy\/([^\/]+)$/);
+	if (tgProxyMatch) {
+		return handleTelegramProxy(request, env, session);
 	}
 	if (pathname === '/api/notes/timeline') {
-		return handleTimelineRequest(request, env);
+		return handleTimelineRequest(request, env, session);
 	}
 	if (pathname === '/api/search') {
-		return handleSearchRequest(request, env);
+		return handleSearchRequest(request, env, session);
 	}
 	const noteDetailMatch = pathname.match(/^\/api\/notes\/([^\/]+)$/);
 	if (noteDetailMatch) {
 		const noteId = noteDetailMatch[1];
-		return handleNoteDetail(request, noteId, env);
+		return handleNoteDetail(request, noteId, env, session);
 	}
 	if (pathname === '/api/notes') {
-		return handleNotesList(request, env);
+		return handleNotesList(request, env, session);
+	}
+
+	if (pathname === '/api/users') {
+		if (request.method === 'GET') {
+			return handleUsersList(env, session);
+		}
+		if (request.method === 'POST') {
+			return handleRegister(request, env, session);
+		}
+	}
+
+	const userUpdateMatch = pathname.match(/^\/api\/users\/([a-zA-Z0-9-]+)$/);
+	if (userUpdateMatch) {
+		const targetUserId = userUpdateMatch[1];
+		if (request.method === 'PUT') {
+			return handleUserUpdate(request, env, targetUserId, session);
+		}
+		if (request.method === 'DELETE') {
+			return handleUserDelete(env, targetUserId, session);
+		}
 	}
 
 	return null;
@@ -177,7 +199,7 @@ export async function handleApiRequest(request, env) {
 		return jsonResponse({ error: 'Unauthorized' }, 401);
 	}
 
-	const authedResponse = await handleAuthenticatedRoutes(pathname, request, env);
+	const authedResponse = await handleAuthenticatedRoutes(pathname, request, env, session);
 	if (authedResponse) {
 		return authedResponse;
 	}

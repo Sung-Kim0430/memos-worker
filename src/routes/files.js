@@ -1,4 +1,16 @@
-export async function handleFileRequest(noteId, fileId, request, env) {
+function canAccess(note, session) {
+	if (!note) return false;
+	if (session?.isAdmin) return true;
+	if (note.owner_id && session?.id === note.owner_id) return true;
+	if (note.visibility === 'users' && session) return true;
+	if (note.visibility === 'public') return true;
+	return false;
+}
+
+export async function handleFileRequest(noteId, fileId, request, env, session) {
+	if (!session) {
+		return new Response('Unauthorized', { status: 401 });
+	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
@@ -6,10 +18,18 @@ export async function handleFileRequest(noteId, fileId, request, env) {
 	}
 
 	// 尝试从数据库获取元数据
-	const note = await db.prepare("SELECT files FROM notes WHERE id = ?").bind(id).first();
+	const note = await db.prepare("SELECT files, owner_id, visibility FROM notes WHERE id = ?").bind(id).first();
 
 	if (!note) {
 		return new Response('Not Found', { status: 404 });
+	}
+
+	if (!note.visibility) {
+		note.visibility = 'private';
+	}
+
+	if (!canAccess(note, session)) {
+		return new Response('Forbidden', { status: 403 });
 	}
 
 	let files = [];

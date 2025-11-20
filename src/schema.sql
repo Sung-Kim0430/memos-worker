@@ -1,3 +1,13 @@
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  is_admin INTEGER DEFAULT 0 NOT NULL,
+  telegram_user_id TEXT UNIQUE,
+  created_at INTEGER NOT NULL
+);
+
 CREATE TABLE tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE
@@ -13,7 +23,10 @@ CREATE TABLE notes (
   is_favorited INTEGER DEFAULT 0 NOT NULL,
   is_archived INTEGER DEFAULT 0 NOT NULL,
   pics TEXT,
-  videos TEXT
+  videos TEXT,
+  owner_id TEXT,
+  visibility TEXT DEFAULT 'private',
+  FOREIGN KEY (owner_id) REFERENCES users(id)
 );
 
 CREATE TABLE note_tags (
