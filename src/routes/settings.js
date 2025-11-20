@@ -25,7 +25,8 @@ export async function handleGetSettings(request, env) {
 		showArchive: true,      // 控制归档
 		enablePinning: true,    // 控制置顶功能
 		enableSharing: true,    // 控制分享功能
-		showDocs: true          // 控制 Docs 链接
+		showDocs: true,          // 控制 Docs 链接
+		enableContentTruncation: true
 	};
 
 	let savedSettings = await env.NOTES_KV.get('user_settings', 'json');
@@ -34,7 +35,8 @@ export async function handleGetSettings(request, env) {
 	if (!savedSettings) {
 		return jsonResponse(defaultSettings);
 	}
-	return jsonResponse(savedSettings);
+	// 合并默认值，防止新增字段在旧配置下为 undefined
+	return jsonResponse({ ...defaultSettings, ...savedSettings });
 }
 
 export async function handleSetSettings(request, env) {
@@ -44,6 +46,6 @@ export async function handleSetSettings(request, env) {
 		return jsonResponse({ success: true });
 	} catch (e) {
 		console.error("Set Settings Error:", e.message);
-		return jsonResponse({ error: 'Failed to save settings' }, 500);
-	}
+	return jsonResponse({ error: 'Failed to save settings' }, 500);
+}
 }

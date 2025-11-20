@@ -219,12 +219,23 @@ export async function handleNoteDetail(request, noteId, env, session) {
 			try { existingVideos = JSON.parse(existingNote.videos); } catch (e) { existingVideos = []; }
 		}
 
-			switch (request.method) {
-					case 'PUT': {
-						if (!canModify) {
-							return jsonResponse({ error: 'Forbidden' }, 403);
-						}
-						const formData = await request.formData();
+		switch (request.method) {
+			case 'GET': {
+				// 返回当前笔记详情（解析后的附件/媒体字段）
+				const noteForClient = { ...existingNote };
+				if (typeof noteForClient.files === 'string') {
+					try { noteForClient.files = JSON.parse(noteForClient.files); } catch (e) { noteForClient.files = []; }
+				}
+				noteForClient.pics = existingPics;
+				noteForClient.videos = existingVideos;
+				return jsonResponse(noteForClient);
+			}
+
+			case 'PUT': {
+				if (!canModify) {
+					return jsonResponse({ error: 'Forbidden' }, 403);
+				}
+				const formData = await request.formData();
 						const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
 
 					if (formData.has('content')) {
