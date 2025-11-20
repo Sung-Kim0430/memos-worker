@@ -683,6 +683,14 @@
 	font-size: 0.9rem;
   }
 
+  .visibility-select:focus,
+  .user-input:focus,
+  .user-select:focus {
+	border-color: var(--primary-color);
+	box-shadow: 0 0 0 2px rgba(54, 124, 255, 0.2);
+	outline: none;
+  }
+
   .note-visibility-badge {
 	display: inline-flex;
 	align-items: center;
@@ -701,6 +709,182 @@
 	background: #1f2937;
 	border-color: #4b5563;
 	color: var(--text-color);
+  }
+
+  /* User management */
+  .user-admin-form {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+	gap: 12px 16px;
+	align-items: end;
+	padding: 12px 0 4px;
+  }
+
+  .user-admin-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+  }
+
+  .user-admin-field label {
+	font-size: 0.9rem;
+	color: var(--text-secondary);
+	font-weight: 600;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+  }
+
+  .user-admin-checkbox {
+	padding: 10px 12px;
+	border: 1px solid var(--border-color);
+	border-radius: 10px;
+	background: var(--surface-color);
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .user-admin-checkbox input {
+	width: 16px;
+	height: 16px;
+  }
+
+  .user-admin-checkbox input:focus-visible {
+	outline: 2px solid var(--primary-color);
+	outline-offset: 2px;
+  }
+
+  .user-admin-checkbox:focus-within {
+	border-color: var(--primary-color);
+	box-shadow: 0 0 0 2px rgba(54, 124, 255, 0.2);
+  }
+
+  .user-admin-actions {
+	grid-column: 1 / -1;
+	display: flex;
+	justify-content: flex-end;
+	padding-top: 4px;
+  }
+
+  .user-table-wrapper {
+	margin-top: 12px;
+	border: 1px solid var(--border-color);
+	border-radius: 12px;
+	overflow: hidden;
+	overflow-x: auto;
+	background: var(--surface-color);
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+  }
+
+  .user-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.95rem;
+	table-layout: auto;
+  }
+
+  .user-table thead {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--surface-color);
+  }
+
+  .user-table th {
+	padding: 12px;
+	text-align: left;
+	color: var(--text-secondary);
+	font-weight: 700;
+	font-size: 0.9rem;
+	letter-spacing: 0.01em;
+	white-space: nowrap;
+	border-bottom: 1px solid var(--border-color);
+  }
+
+  .user-table td {
+	padding: 12px;
+	border-top: 1px solid var(--border-color);
+	vertical-align: middle;
+	background: var(--surface-color);
+  }
+
+  .user-table tbody tr:nth-child(even) td {
+	background: rgba(0, 0, 0, 0.02);
+  }
+
+  body[data-theme='dark'] .user-table tbody tr:nth-child(even) td {
+	background: rgba(255, 255, 255, 0.04);
+  }
+
+  .user-table tbody tr:hover td {
+	background: rgba(54, 124, 255, 0.06);
+  }
+
+  body[data-theme='dark'] .user-table tbody tr:hover td {
+	background: rgba(54, 124, 255, 0.12);
+  }
+
+  .user-table .time-cell {
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+  }
+
+  .user-table .nowrap-cell {
+	white-space: nowrap;
+  }
+
+  .user-table .telegram-cell[data-empty='true'] {
+	color: var(--text-secondary);
+	font-style: italic;
+  }
+
+  .user-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+  }
+
+  .user-action {
+	padding: 8px 12px;
+	border-radius: 10px;
+	border: 1px solid var(--border-color);
+	background: var(--surface-color);
+	color: var(--text-color);
+	font-size: 0.9rem;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.2s ease;
+  }
+
+  .user-action:hover {
+	background: rgba(54, 124, 255, 0.1);
+	color: var(--text-color);
+  }
+
+  .user-action.btn-accent {
+	border-color: rgba(56, 178, 172, 0.4);
+	background: rgba(56, 178, 172, 0.12);
+	color: var(--accent-color);
+  }
+
+  .user-action.btn-danger {
+	border-color: rgba(229, 62, 62, 0.35);
+	background: rgba(229, 62, 62, 0.12);
+	color: var(--danger-color);
+  }
+
+  .user-action:focus-visible {
+	outline: 2px solid var(--primary-color);
+	outline-offset: 1px;
+  }
+
+  .user-table-empty {
+	padding: 12px;
+	color: var(--text-secondary);
+	text-align: center;
   }
 
   .file-list-display {
@@ -3654,26 +3838,45 @@
 
 				<div class='setting-group' id='user-management-section' style='display:none;'>
 					<h4>User Management (Admin)</h4>
-					<form id='create-user-form' class='setting-item' style='display:grid; gap:6px; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); align-items:center;'>
-						<input type='text' id='new-username' class='user-input' placeholder='Username' required>
-						<input type='password' id='new-password' class='user-input' placeholder='Password' required>
-						<input type='text' id='new-telegram-id' class='user-input' placeholder='Telegram User ID (optional)'>
-						<label style='display:flex; align-items:center; gap:6px; white-space:nowrap;'><input type='checkbox' id='new-is-admin'> Admin</label>
-						<button type='submit' class='btn btn-primary' style='grid-column: 1 / -1; justify-self:flex-start;'>Create User</button>
+					<form id='create-user-form' class='setting-item user-admin-form'>
+						<div class='user-admin-field'>
+							<label for='new-username'>Username</label>
+							<input type='text' id='new-username' class='user-input' placeholder='Username' required>
+						</div>
+						<div class='user-admin-field'>
+							<label for='new-password'>Password</label>
+							<input type='password' id='new-password' class='user-input' placeholder='Password' required>
+						</div>
+						<div class='user-admin-field'>
+							<label for='new-telegram-id'>Telegram User ID (optional)</label>
+							<input type='text' id='new-telegram-id' class='user-input' placeholder='Telegram User ID (optional)'>
+						</div>
+						<div class='user-admin-field'>
+							<label for='new-is-admin'>Admin</label>
+							<label class='user-admin-checkbox' for='new-is-admin'>
+								<input type='checkbox' id='new-is-admin' aria-label='Admin'>
+								<span>Admin</span>
+							</label>
+						</div>
+						<div class='user-admin-actions'>
+							<button type='submit' class='btn btn-primary'>Create User</button>
+						</div>
 					</form>
 					<div class='setting-item'>
-						<table style='width:100%; border-collapse:collapse; font-size:0.9rem;' id='user-table'>
-							<thead>
-								<tr style='text-align:left; border-bottom:1px solid var(--border-color);'>
-									<th style='padding:6px;'>Username</th>
-									<th style='padding:6px;'>Admin</th>
-									<th style='padding:6px;'>Telegram</th>
-									<th style='padding:6px;'>Created</th>
-									<th style='padding:6px;'>Actions</th>
-								</tr>
-							</thead>
-							<tbody id='user-table-body'></tbody>
-						</table>
+						<div class='user-table-wrapper'>
+							<table id='user-table' class='user-table' aria-label='User list'>
+								<thead>
+									<tr>
+										<th>Username</th>
+										<th>Admin</th>
+										<th>Telegram</th>
+										<th>Created</th>
+										<th>Actions</th>
+									</tr>
+								</thead>
+								<tbody id='user-table-body'></tbody>
+							</table>
+						</div>
 					</div>
 				</div>
 
@@ -7323,6 +7526,14 @@
 		return `${parseFloat((b / Math.pow(k, i)).toFixed(d))} ${units[i]}`;
 	};
 
+	const formatDateTime = (value) => {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return '-';
+		const pad = (n) => String(n).padStart(2, '0');
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+	};
+
 	let toastTimer;
 	function showToast(message, type = 'success', duration = 3000) {
 		const toast = document.getElementById('toast-notification');
@@ -7370,23 +7581,26 @@
 		const noLabel = translateMessage('No');
 		const resetPasswordLabel = translateMessage('Reset Password');
 		if (!users.length) {
-			userTableBody.innerHTML = `<tr><td colspan="5" style="padding:8px; color: var(--text-secondary);">${translateMessage('No users.')}</td></tr>`;
+			userTableBody.innerHTML = `<tr><td colspan="5" class="user-table-empty">${translateMessage('No users.')}</td></tr>`;
 			return;
 		}
 		userTableBody.innerHTML = users.map(user => {
-			const created = user.created_at ? new Date(user.created_at).toLocaleString(getLocale()) : '';
+			const created = formatDateTime(user.created_at);
+			const telegram = user.telegram_user_id || '-';
 			const adminToggleTitle = translateMessage(user.is_admin ? 'Remove admin' : 'Make admin');
 			const adminToggleText = translateMessage(user.is_admin ? 'Revoke Admin' : 'Make Admin');
 			return `
 				<tr data-user-id="${user.id}">
-					<td style="padding:6px;">${user.username}</td>
-					<td style="padding:6px;">${user.is_admin ? yesLabel : noLabel}</td>
-					<td style="padding:6px;">${user.telegram_user_id || ''}</td>
-					<td style="padding:6px;">${created}</td>
-					<td style="padding:6px; display:flex; gap:6px; flex-wrap:wrap;">
-						<button class="icon-btn btn-accent user-action" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
-						<button class="icon-btn user-action" data-action="reset-password">${resetPasswordLabel}</button>
-						<button class="icon-btn btn-danger user-action" data-action="delete-user">${translateMessage('Delete')}</button>
+					<td>${user.username}</td>
+					<td class="nowrap-cell">${user.is_admin ? yesLabel : noLabel}</td>
+					<td class="telegram-cell" data-empty="${telegram === '-' ? 'true' : 'false'}">${telegram}</td>
+					<td class="time-cell">${created}</td>
+					<td>
+						<div class="user-actions" role="group" aria-label="${translateMessage('Actions')}">
+							<button class="user-action btn-accent" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
+							<button class="user-action" data-action="reset-password">${resetPasswordLabel}</button>
+							<button class="user-action btn-danger" data-action="delete-user">${translateMessage('Delete')}</button>
+						</div>
 					</td>
 				</tr>
 			`;
