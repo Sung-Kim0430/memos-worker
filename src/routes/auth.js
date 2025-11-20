@@ -308,9 +308,18 @@ export async function handleUserDelete(env, targetUserId, session) {
 	if (!admin) {
 		return jsonResponse({ error: 'Admin account missing, cannot transfer notes.' }, 500);
 	}
-	// 转移该用户的笔记给管理员
-	await env.DB.prepare("UPDATE notes SET owner_id = ? WHERE owner_id = ?").bind(admin.id, targetUserId).run();
-	await env.DB.prepare("DELETE FROM users WHERE id = ?").bind(targetUserId).run();
+	// 转移笔记 + 删除用户使用事务，避免部分失败导致数据不一致
+	const db = env.DB;
+	await db.prepare("BEGIN IMMEDIATE").run();
+	try {
+		await db.prepare("UPDATE notes SET owner_id = ? WHERE owner_id = ?").bind(admin.id, targetUserId).run();
+		await db.prepare("DELETE FROM users WHERE id = ?").bind(targetUserId).run();
+		await db.prepare("COMMIT").run();
+	} catch (e) {
+		try { await db.prepare("ROLLBACK").run(); } catch (rollbackErr) { console.error("Rollback failed:", rollbackErr.message); }
+		console.error("Delete User Tx Error:", e.message);
+		return jsonResponse({ error: 'Failed to delete user', message: e.message }, 500);
+	}
 	// 清理该用户相关的会话
 	const list = await env.NOTES_KV.list({ prefix: 'session:' });
 	for (const item of list.keys) {

@@ -183,6 +183,8 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 	if (!session) {
 		return jsonResponse({ error: 'Unauthorized' }, 401);
 	}
+	const lockKey = `share_lock:${noteId}`;
+	let lockAcquired = false;
 	try {
 		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
 		if (!note) {
@@ -190,6 +192,15 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		}
 		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
 			return jsonResponse({ error: 'Forbidden' }, 403);
+		}
+		try {
+			await env.NOTES_KV.put(lockKey, '1', { expirationTtl: 30, ifNotExists: true });
+			lockAcquired = true;
+		} catch (lockErr) {
+			if (lockErr?.message?.includes('exists')) {
+				return jsonResponse({ error: 'Share update is in progress, please retry.' }, 409);
+			}
+			throw lockErr;
 		}
 		// 1) 检查 request body 中是否有 "expirationTtl" 字段
 		const bodyText = await request.text();
@@ -260,6 +271,10 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 	} catch (e) {
 		console.error(`Share/Update Note Error (noteId: ${noteId}):`, e.message);
 		return jsonResponse({ error: 'Database or KV error during operation' }, 500);
+	} finally {
+		if (lockAcquired) {
+			try { await env.NOTES_KV.delete(lockKey); } catch (cleanupErr) { console.error("Release share lock failed:", cleanupErr.message); }
+		}
 	}
 }
 
@@ -331,12 +346,19 @@ export async function handlePublicNoteRequest(publicId, env) {
 		// 1. 处理笔记正文 `content` 中的内联图片和视频
 			const urlRegex = /(\/api\/(?:files|images|tg-media-proxy)\/[a-zA-Z0-9\/_.-]+)/g;
 			const matches = [...note.content.matchAll(urlRegex)];
-			let processedContent = note.content;
+			let processedContent = '';
+			let lastIndex = 0;
 			for (const match of matches) {
 				const privateUrl = match[0];
+				const start = match.index ?? lastIndex;
+				if (start > lastIndex) {
+					processedContent += note.content.slice(lastIndex, start);
+				}
 				const publicUrl = await createPublicUrlFor(privateUrl);
-				processedContent = processedContent.replace(privateUrl, publicUrl);
+				processedContent += publicUrl;
+				lastIndex = start + privateUrl.length;
 			}
+			processedContent += note.content.slice(lastIndex);
 		note.content = sanitizeContent(processedContent);
 
 		// 2. 处理 `files` 附件列表

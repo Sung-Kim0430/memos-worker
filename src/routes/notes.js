@@ -3,6 +3,17 @@ import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
 import { jsonResponse } from '../utils/response.js';
 import { processNoteTags } from '../utils/tags.js';
 
+function escapeRegex(str) {
+	return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 仅替换 Markdown 链接/图片中的目标 URL，避免误改正文中的同名文本
+function replaceMarkdownUrl(content, oldUrl, newUrl) {
+	const escaped = escapeRegex(oldUrl);
+	const pattern = new RegExp(`(!?\\[[^\\]]*\\]\\(|\\()${escaped}(\\))`, 'g');
+	return content.replace(pattern, (_, prefix, suffix) => `${prefix}${newUrl}${suffix}`);
+}
+
 function canAccessNoteRecord(note, session) {
 	if (!note) return false;
 	if (session?.isAdmin) return true;
@@ -139,6 +150,9 @@ export async function handleNotesList(request, env, session) {
 			}
 
 			case 'POST': {
+					const uploadedKeys = [];
+					let createdNoteId = null;
+				try {
 					const formData = await request.formData();
 					const content = formData.get('content')?.toString() || '';
 					const files = formData.getAll('file');
@@ -174,6 +188,7 @@ export async function handleNotesList(request, env, session) {
 						ownerId,
 						visibility
 					).first();
+					createdNoteId = noteId;
 				if (!noteId) {
 					throw new Error("Failed to create note and get ID.");
 				}
@@ -186,7 +201,9 @@ export async function handleNotesList(request, env, session) {
 					// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
 					if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
 						const fileId = crypto.randomUUID();
-						await env.NOTES_R2_BUCKET.put(`${noteId}/${fileId}`, file.stream());
+						const objectKey = `${noteId}/${fileId}`;
+						await env.NOTES_R2_BUCKET.put(objectKey, file.stream());
+						uploadedKeys.push(objectKey);
 						filesMeta.push({ id: fileId, name: file.name, size: file.size, type: file.type });
 					}
 				}
@@ -213,6 +230,21 @@ export async function handleNotesList(request, env, session) {
 					newNote.visibility = visibility;
 
 					return jsonResponse(newNote, 201);
+				} catch (err) {
+					// 回滚已上传的对象和占位笔记，避免脏数据
+					if (uploadedKeys.length > 0) {
+						try { await env.NOTES_R2_BUCKET.delete(uploadedKeys); } catch (cleanupErr) { console.error("Cleanup uploaded files failed:", cleanupErr.message); }
+					}
+					if (createdNoteId) {
+						try {
+							await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(createdNoteId).run();
+							await db.prepare("DELETE FROM notes WHERE id = ?").bind(createdNoteId).run();
+						} catch (cleanupErr) {
+							console.error("Cleanup created note failed:", cleanupErr.message);
+						}
+					}
+					throw err;
+				}
 			}
 		}
 	} catch (e) {
@@ -264,8 +296,13 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				if (!canModify) {
 					return jsonResponse({ error: 'Forbidden' }, 403);
 				}
+				const originalUpdatedAt = existingNote.updated_at;
+				let lastKnownUpdatedAt = originalUpdatedAt;
 				const formData = await request.formData();
 						const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
+				const pendingR2Deletions = [];
+				const newUploads = [];
+				const bucket = env.NOTES_R2_BUCKET;
 
 					if (formData.has('content')) {
 						const content = formData.get('content')?.toString() ?? existingNote.content;
@@ -281,7 +318,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						}
 						if (filesToDelete.length > 0) {
 							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
-							await env.NOTES_R2_BUCKET.delete(r2KeysToDelete);
+							pendingR2Deletions.push(...r2KeysToDelete);
 							currentFiles = currentFiles.filter(file => !filesToDelete.includes(file.id));
 						}
 
@@ -294,8 +331,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						// 在处理完文件删除后，检查笔记是否应该被删除
 						const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
 						if (content.trim() === '' && currentFiles.length === 0 && nextPicList.length === 0 && nextVideoList.length === 0 && !hasNewFiles) {
-							// 笔记即将变空，执行删除操作
-							// 1. 删除 R2 中的所有剩余文件/图片/视频
+							// 笔记即将变空，执行删除操作（带并发保护）
 							const attachmentKeys = existingNote.files.map(file => `${id}/${file.id}`);
 							const picKeys = existingPics.map(url => {
 								const imageMatch = url.match(/^\/api\/images\/([a-zA-Z0-9-]+)$/);
@@ -310,11 +346,12 @@ export async function handleNoteDetail(request, noteId, env, session) {
 								return null;
 							}).filter(Boolean);
 							const allR2Keys = [...attachmentKeys, ...picKeys, ...videoKeys];
-							if (allR2Keys.length > 0) {
-								await env.NOTES_R2_BUCKET.delete(allR2Keys);
+
+							const deleteResult = await db.prepare("DELETE FROM notes WHERE id = ? AND updated_at = ?").bind(id, originalUpdatedAt).run();
+							if (!deleteResult.meta?.changes) {
+								return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
 							}
-							// 2. 删除分享 KV 和标签、笔记
-							await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(id).run();
+							// 删除分享 KV 和缓存
 							const publicId = await env.NOTES_KV.get(`note_share:${id}`);
 							if (publicId) {
 								await env.NOTES_KV.delete(`public_memo:${publicId}`);
@@ -331,8 +368,11 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							} else {
 								await env.NOTES_KV.delete(`note_share:${id}`);
 							}
-							await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
-							// 3. 返回特殊标记，告知前端整个笔记已被删除
+
+							if (allR2Keys.length > 0) {
+								await bucket.delete(allR2Keys);
+							}
+							// 返回特殊标记，告知前端整个笔记已被删除
 							return jsonResponse({ success: true, noteDeleted: true });
 						}
 					// 处理新附件上传
@@ -344,7 +384,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 								return jsonResponse({ error: 'File too large.' }, 413);
 							}
 							const fileId = crypto.randomUUID();
-							await env.NOTES_R2_BUCKET.put(`${id}/${fileId}`, file.stream());
+							const objectKey = `${id}/${fileId}`;
+							await bucket.put(objectKey, file.stream());
+							newUploads.push(objectKey);
 							currentFiles.push({ id: fileId, name: file.name, size: file.size, type: file.type });
 						}
 						}
@@ -353,39 +395,70 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						const newTimestamp = shouldUpdateTimestamp ? Date.now() : existingNote.updated_at;
 						// 在 UPDATE 语句中加入 pics 字段的更新
 						const stmt = db.prepare(
-							"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ?"
+							"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ? AND updated_at = ?"
 						);
-						await stmt.bind(
+						const updateResult = await stmt.bind(
 							content,
 							JSON.stringify(currentFiles),
 							newTimestamp,
 							JSON.stringify(nextPicList),
 							JSON.stringify(nextVideoList),
-							id
+							id,
+							originalUpdatedAt
 						).run();
+						if (!updateResult.meta?.changes) {
+							if (newUploads.length > 0) {
+								try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr.message); }
+							}
+							return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+						}
 						await processNoteTags(db, id, content);
+						lastKnownUpdatedAt = newTimestamp;
+						if (pendingR2Deletions.length > 0) {
+							await bucket.delete(pendingR2Deletions);
+						}
 				}
 
 				if (formData.has('isPinned')) { // --- 这是置顶状态的更新 ---
 					const isPinned = formData.get('isPinned') === 'true' ? 1 : 0;
-					const stmt = db.prepare("UPDATE notes SET is_pinned = ? WHERE id = ?");
-					await stmt.bind(isPinned, id).run();
+					const nextUpdatedAt = Date.now();
+					const stmt = db.prepare("UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
+					const result = await stmt.bind(isPinned, nextUpdatedAt, id, lastKnownUpdatedAt).run();
+					if (!result.meta?.changes) {
+						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+					}
+					lastKnownUpdatedAt = nextUpdatedAt;
 				}
 				if (formData.has('isFavorited')) {
 					const isFavorited = formData.get('isFavorited') === 'true' ? 1 : 0;
-					const stmt = db.prepare("UPDATE notes SET is_favorited = ? WHERE id = ?");
-					await stmt.bind(isFavorited, id).run();
+					const nextUpdatedAt = Date.now();
+					const stmt = db.prepare("UPDATE notes SET is_favorited = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
+					const result = await stmt.bind(isFavorited, nextUpdatedAt, id, lastKnownUpdatedAt).run();
+					if (!result.meta?.changes) {
+						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+					}
+					lastKnownUpdatedAt = nextUpdatedAt;
 				}
 				if (formData.has('is_archived')) {
 					const isArchived = formData.get('is_archived') === 'true' ? 1 : 0;
-					const stmt = db.prepare("UPDATE notes SET is_archived = ? WHERE id = ?");
-					await stmt.bind(isArchived, id).run();
+					const nextUpdatedAt = Date.now();
+					const stmt = db.prepare("UPDATE notes SET is_archived = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
+					const result = await stmt.bind(isArchived, nextUpdatedAt, id, lastKnownUpdatedAt).run();
+					if (!result.meta?.changes) {
+						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+					}
+					lastKnownUpdatedAt = nextUpdatedAt;
 				}
 				if (formData.has('visibility')) {
 					const vis = formData.get('visibility');
 					const allowed = ['private', 'users', 'public'];
 					if (allowed.includes(vis)) {
-						await db.prepare("UPDATE notes SET visibility = ? WHERE id = ?").bind(vis, id).run();
+						const nextUpdatedAt = Date.now();
+						const result = await db.prepare("UPDATE notes SET visibility = ?, updated_at = ? WHERE id = ? AND updated_at = ?").bind(vis, nextUpdatedAt, id, lastKnownUpdatedAt).run();
+						if (!result.meta?.changes) {
+							return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+						}
+						lastKnownUpdatedAt = nextUpdatedAt;
 					}
 				}
 
@@ -394,6 +467,11 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				updatedNote.pics = safeParseJsonArray(updatedNote.pics);
 				updatedNote.videos = safeParseJsonArray(updatedNote.videos);
 				return jsonResponse(updatedNote);
+			} catch (err) {
+				if (newUploads.length > 0) {
+					try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr.message); }
+				}
+				throw err;
 			}
 
 				case 'DELETE': {
@@ -485,6 +563,7 @@ export async function handleMergeNotes(request, env, session) {
 	}
 	const db = env.DB;
 	const bucket = env.NOTES_R2_BUCKET;
+	let txStarted = false;
 	try {
 		const { sourceNoteId, targetNoteId, addSeparator } = await request.json();
 
@@ -504,6 +583,8 @@ export async function handleMergeNotes(request, env, session) {
 	if (!(canModifyNote(sourceNote, session) && canModifyNote(targetNote, session))) {
 		return jsonResponse({ error: 'Forbidden' }, 403);
 	}
+	const sourceUpdatedAt = sourceNote.updated_at;
+	const targetUpdatedAt = targetNote.updated_at;
 
 		// Helpers
 		const parseJsonArray = (value) => {
@@ -514,33 +595,30 @@ export async function handleMergeNotes(request, env, session) {
 			}
 			return [];
 		};
-		const replaceAll = (str, search, replacement) => {
-			if (!search || search === replacement) return str;
-			return str.split(search).join(replacement);
-		};
-		const movedFileIds = new Set();
-		const moveObjectIfExists = async (fileId) => {
+		const copiedFileIds = new Set();
+		const newObjectKeys = [];
+		const copyObjectIfExists = async (fileId) => {
 			if (!fileId) return false;
-			if (movedFileIds.has(fileId)) return true;
+			if (copiedFileIds.has(fileId)) return true;
 			const oldKey = `${sourceNote.id}/${fileId}`;
 			const newKey = `${targetNote.id}/${fileId}`;
 			if (oldKey === newKey) return true;
 			try {
 				const destExists = await bucket.head(newKey);
 				if (destExists) {
-					movedFileIds.add(fileId);
+					copiedFileIds.add(fileId);
 					return true;
 				}
 			} catch (e) {
-				// head 不支持时继续尝试移动
+				// head 不支持时继续尝试复制
 			}
 			const object = await bucket.get(oldKey);
 			if (!object) {
 				return false;
 			}
 			await bucket.put(newKey, object.body, { httpMetadata: object.httpMetadata });
-			await bucket.delete(oldKey);
-			movedFileIds.add(fileId);
+			newObjectKeys.push(newKey);
+			copiedFileIds.add(fileId);
 			return true;
 		};
 
@@ -557,15 +635,15 @@ export async function handleMergeNotes(request, env, session) {
 
 		// Move source attachments to the target note and rewrite URLs in the merged content
 		for (const file of sourceFiles) {
-			const moved = await moveObjectIfExists(file.id);
-			if (moved) {
+			const copied = await copyObjectIfExists(file.id);
+			if (copied) {
 				const oldUrl = `/api/files/${sourceNote.id}/${file.id}`;
 				const newUrl = `/api/files/${targetNote.id}/${file.id}`;
-				mergedContent = replaceAll(mergedContent, oldUrl, newUrl);
+				mergedContent = replaceMarkdownUrl(mergedContent, oldUrl, newUrl);
 			}
 		}
 		// Only keep source attachments that were successfully moved to the target note
-		const mergedFiles = [...targetFiles, ...sourceFiles.filter(file => movedFileIds.has(file.id))];
+		const mergedFiles = [...targetFiles, ...sourceFiles.filter(file => copiedFileIds.has(file.id))];
 
 		const rewriteInlineMedia = async (urls) => {
 			const rewritten = [];
@@ -574,10 +652,10 @@ export async function handleMergeNotes(request, env, session) {
 				const match = url.match(/^\/api\/files\/(\d+)\/([a-zA-Z0-9-]+)$/);
 				if (match && match[1] === sourceNote.id.toString()) {
 					const fileId = match[2];
-					const moved = await moveObjectIfExists(fileId);
-					if (moved) {
+					const copied = await copyObjectIfExists(fileId);
+					if (copied) {
 						newUrl = `/api/files/${targetNote.id}/${fileId}`;
-						mergedContent = replaceAll(mergedContent, url, newUrl);
+						mergedContent = replaceMarkdownUrl(mergedContent, url, newUrl);
 					}
 				}
 				rewritten.push(newUrl);
@@ -596,24 +674,52 @@ export async function handleMergeNotes(request, env, session) {
 
 		// --- 数据库与 R2 操作 ---
 
+		await db.prepare("BEGIN IMMEDIATE").run();
+		txStarted = true;
 		// 更新目标笔记
 		const stmt = db.prepare(
-			"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ?"
+			"UPDATE notes SET content = ?, files = ?, updated_at = ?, pics = ?, videos = ? WHERE id = ? AND updated_at = ?"
 		);
-		await stmt.bind(
+		const updateResult = await stmt.bind(
 			mergedContent,
 			JSON.stringify(mergedFiles),
 			mergedTimestamp,
 			JSON.stringify(mergedPics),
 			JSON.stringify(mergedVideos),
-			targetNote.id
+			targetNote.id,
+			targetUpdatedAt
 		).run();
+		if (!updateResult.meta?.changes) {
+			await db.prepare("ROLLBACK").run();
+			if (newObjectKeys.length > 0) {
+				try { await bucket.delete(newObjectKeys); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
+			}
+			return jsonResponse({ error: 'Conflict: target note was modified, please retry.' }, 409);
+		}
+
+		// 删除源笔记
+		const deleteResult = await db.prepare("DELETE FROM notes WHERE id = ? AND updated_at = ?").bind(sourceNote.id, sourceUpdatedAt).run();
+		if (!deleteResult.meta?.changes) {
+			await db.prepare("ROLLBACK").run();
+			if (newObjectKeys.length > 0) {
+				try { await bucket.delete(newObjectKeys); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
+			}
+			return jsonResponse({ error: 'Conflict: source note was modified, please retry.' }, 409);
+		}
+		await db.prepare("COMMIT").run();
 
 		// 为更新后的目标笔记重新处理标签
 		await processNoteTags(db, targetNote.id, mergedContent);
-
-		// 删除源笔记
-		await db.prepare("DELETE FROM notes WHERE id = ?").bind(sourceNote.id).run();
+		// 清理源笔记在 R2 中的残留对象
+		try {
+			const objects = await bucket.list({ prefix: `${sourceNote.id}/` });
+			const keys = (objects?.objects || []).map(obj => obj.key);
+			if (keys.length > 0) {
+				await bucket.delete(keys);
+			}
+		} catch (cleanupErr) {
+			console.error("Cleanup source note objects failed:", cleanupErr.message);
+		}
 
 		// 返回更新后的目标笔记
 		const updatedMergedNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(targetNote.id).first();
@@ -630,6 +736,18 @@ export async function handleMergeNotes(request, env, session) {
 		return jsonResponse(updatedMergedNote);
 
 	} catch (e) {
+		if (txStarted) {
+			try { await db.prepare("ROLLBACK").run(); } catch (_) { /* ignore */ }
+		}
+		try {
+			// 最好删除已经复制的对象，避免重复
+			// newObjectKeys 在上面作用域，如果抛错在复制阶段仍可捕获
+			if (typeof newObjectKeys !== 'undefined' && newObjectKeys.length > 0) {
+				await bucket.delete(newObjectKeys);
+			}
+		} catch (cleanupErr) {
+			console.error("Cleanup copied objects failed:", cleanupErr.message);
+		}
 		console.error("Merge Notes Error:", e.message, e.cause);
 		return jsonResponse({ error: 'Database or R2 error during merge', message: e.message }, 500);
 	}

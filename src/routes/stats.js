@@ -7,6 +7,15 @@ function accessWhere(session, alias = '') {
 		: { clause: `(${prefix}owner_id = ? OR ${prefix}visibility IN ('users','public'))`, binds: [session?.id || ''] };
 }
 
+function isValidTimezone(tz) {
+	try {
+		new Intl.DateTimeFormat('en-US', { timeZone: tz });
+		return true;
+	} catch (e) {
+		return false;
+	}
+}
+
 export async function handleStatsRequest(request, env, session) {
 	if (!session) {
 		return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -52,43 +61,39 @@ export async function handleTimelineRequest(request, env, session) {
 	try {
 		const { searchParams } = new URL(request.url);
 		const timezone = searchParams.get('timezone') || 'UTC';
-		const access = accessWhere(session);
-		const stmt = db.prepare(`SELECT updated_at FROM notes WHERE ${access.clause} ORDER BY updated_at DESC`);
-		const { results } = await stmt.bind(...access.binds).all();
-		if (!results) {
-			return jsonResponse({});
+		if (!isValidTimezone(timezone)) {
+			return jsonResponse({ error: 'Invalid timezone' }, 400);
 		}
-		const timezoneFormatter = new Intl.DateTimeFormat('en-US', { // 'en-US' 只是为了格式，不影响结果
-			timeZone: timezone,
-			year: 'numeric',
-			month: 'numeric',
-			day: 'numeric',
-		});
-		// 在 JavaScript 中进行分组统计
+		const access = accessWhere(session);
+		const stmt = db.prepare(`
+			SELECT
+				CAST(strftime('%Y', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS year,
+				CAST(strftime('%m', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS month,
+				CAST(strftime('%d', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS day,
+				COUNT(*) as count
+			FROM notes
+			WHERE ${access.clause}
+			GROUP BY year, month, day
+			ORDER BY year DESC, month DESC, day DESC
+		`);
+		const { results } = await stmt.bind(...access.binds).all();
 		const timeline = {};
-		for (const note of results) {
-			const date = new Date(note.updated_at);
-			const parts = timezoneFormatter.formatToParts(date);
-			const year = parseInt(parts.find(p => p.type === 'year').value, 10);
-			const month = parseInt(parts.find(p => p.type === 'month').value, 10);
-			const day = parseInt(parts.find(p => p.type === 'day').value, 10);
-
-			// 初始化年
+		for (const row of results || []) {
+			const year = row.year;
+			const month = row.month;
+			const day = row.day;
 			if (!timeline[year]) {
 				timeline[year] = { count: 0, months: {} };
 			}
-			// 初始化月
 			if (!timeline[year].months[month]) {
 				timeline[year].months[month] = { count: 0, days: {} };
 			}
-			// 初始化日
 			if (!timeline[year].months[month].days[day]) {
 				timeline[year].months[month].days[day] = { count: 0 };
 			}
-			// 递增计数
-			timeline[year].count++;
-			timeline[year].months[month].count++;
-			timeline[year].months[month].days[day].count++;
+			timeline[year].count += row.count;
+			timeline[year].months[month].count += row.count;
+			timeline[year].months[month].days[day].count += row.count;
 		}
 		return jsonResponse(timeline);
 	} catch (e) {
