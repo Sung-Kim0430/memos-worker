@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS note_tags (
 
 -- 常用查询索引
 CREATE INDEX IF NOT EXISTS idx_notes_owner_visibility_updated ON notes(owner_id, visibility, updated_at);
+CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
+CREATE INDEX IF NOT EXISTS idx_note_tags_note_id ON note_tags(note_id);
 CREATE INDEX IF NOT EXISTS idx_note_tags_tag_id ON note_tags(tag_id);
 
 

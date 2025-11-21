@@ -17,7 +17,7 @@ export async function handleDocsTree(request, env, session) {
 		const tree = buildTree(results, null);
 		return jsonResponse(tree);
 	} catch (e) {
-		console.error("Docs Tree Error:", e.message);
+		console.error("Docs Tree Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -38,7 +38,7 @@ export async function handleDocsNodeGet(request, nodeId, env, session) {
 		}
 		return jsonResponse(node);
 	} catch (e) {
-		console.error(`Docs Get Node Error (id: ${nodeId}):`, e.message);
+		console.error(`Docs Get Node Error (id: ${nodeId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -52,12 +52,18 @@ export async function handleDocsNodeUpdate(request, nodeId, env, session) {
 		return errorResponse('INVALID_NODE_ID', 'Invalid node id', 400);
 	}
 	try {
-		const { content } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { content } = body;
 		const stmt = env.DB.prepare("UPDATE nodes SET content = ?, updated_at = ? WHERE id = ?");
 		await stmt.bind(content, Date.now(), nodeId).run();
 		return jsonResponse({ success: true });
 	} catch (e) {
-		console.error(`Docs Update Node Error (id: ${nodeId}):`, e.message, e.cause);
+		console.error(`Docs Update Node Error (id: ${nodeId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -68,7 +74,13 @@ export async function handleDocsNodeCreate(request, env, session) {
 		return authError;
 	}
 	try {
-		const { type, title, parent_id } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { type, title, parent_id } = body;
 
 		if (!type || !title || typeof type !== 'string' || typeof title !== 'string') {
 			return errorResponse('INVALID_INPUT', 'Both type and title are required.', 400);
@@ -89,7 +101,7 @@ export async function handleDocsNodeCreate(request, env, session) {
 		const { id: insertedId } = await stmt.bind(id, type.trim(), title.trim(), parent_id, now, now).first();
 		return jsonResponse({ id: insertedId });
 	} catch (e) {
-		console.error("Docs Create Node Error:", e.message, e.cause);
+		console.error("Docs Create Node Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -137,7 +149,7 @@ export async function handleDocsNodeDelete(request, nodeId, env, session) {
 
 		return jsonResponse({ success: true, deletedIds: descendantIds });
 	} catch (e) {
-		console.error(`Docs Delete Node Error (id: ${nodeId}):`, e.message, e.cause);
+		console.error(`Docs Delete Node Error (id: ${nodeId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -152,7 +164,13 @@ export async function handleDocsNodeMove(request, nodeId, env, session) {
 	}
 	const db = env.DB;
 	try {
-		const { new_parent_id } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { new_parent_id } = body;
 
 		const currentNode = await db.prepare("SELECT id FROM nodes WHERE id = ?").bind(nodeId).first();
 		if (!currentNode) {
@@ -186,7 +204,7 @@ export async function handleDocsNodeMove(request, nodeId, env, session) {
 
 		return jsonResponse({ success: true });
 	} catch (e) {
-		console.error(`Docs Move Node Error (id: ${nodeId}):`, e.message, e.cause);
+		console.error(`Docs Move Node Error (id: ${nodeId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -201,7 +219,13 @@ export async function handleDocsNodeRename(request, nodeId, env, session) {
 	}
 	const db = env.DB;
 	try {
-		const { new_title } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { new_title } = body;
 
 		// 验证 new_title 是否存在且不为空
 		if (!new_title || typeof new_title !== 'string' || new_title.trim() === '') {
@@ -213,7 +237,7 @@ export async function handleDocsNodeRename(request, nodeId, env, session) {
 
 		return jsonResponse({ success: true, new_title: new_title.trim() });
 	} catch (e) {
-		console.error(`Docs Rename Node Error (id: ${nodeId}):`, e.message, e.cause);
+		console.error(`Docs Rename Node Error (id: ${nodeId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }

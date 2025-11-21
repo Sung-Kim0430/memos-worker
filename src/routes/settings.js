@@ -24,11 +24,16 @@ export async function handleSetSettings(request, env, session) {
 		return authError;
 	}
 	try {
-		const settingsToSave = await request.json();
+		let settingsToSave;
+		try {
+			settingsToSave = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
 		await env.NOTES_KV.put('user_settings', JSON.stringify(settingsToSave));
 		return jsonResponse({ success: true });
 	} catch (e) {
-		console.error("Set Settings Error:", e.message);
+		console.error("Set Settings Error:", e);
 		return errorResponse('SAVE_FAILED', 'Failed to save settings', 500, e.message);
 	}
 }

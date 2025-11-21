@@ -93,7 +93,7 @@ export async function handleTimelineRequest(request, env, session) {
 		}
 		return jsonResponse(timeline);
 	} catch (e) {
-		console.error("Timeline Error:", e.message);
+		console.error("Timeline Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }

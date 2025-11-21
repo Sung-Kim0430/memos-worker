@@ -96,8 +96,16 @@ function isSecureRequest(request) {
 
 function parseSessionIdFromCookie(cookieHeader) {
 	if (!cookieHeader) return '';
-	const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
-	return match ? match[1] : '';
+	for (const segment of cookieHeader.split(';')) {
+		const trimmed = segment.trim();
+		if (!trimmed) continue;
+		const [name, ...rest] = trimmed.split('=');
+		if (name === SESSION_COOKIE) {
+			const value = rest.join('=').trim();
+			return value.replace(/^"|"$/g, '');
+		}
+	}
+	return '';
 }
 
 async function checkLoginRateLimit(env, request) {
@@ -155,7 +163,13 @@ export async function handleLogin(request, env) {
 		if (rate.limited) {
 			return errorResponse('RATE_LIMITED', 'Too many login attempts. Please try again later.', 429, { remaining: rate.remaining });
 		}
-		const { username, password } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { username, password } = body;
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return errorResponse('INVALID_CREDENTIALS', 'Invalid credentials', 401);
 		}
@@ -174,7 +188,7 @@ export async function handleLogin(request, env) {
 		}
 		await recordLoginFailure(env, request);
 	} catch (e) {
-		console.error("Login Error:", e.message);
+		console.error("Login Error:", e);
 		return errorResponse('LOGIN_ERROR', 'Server error during login', 500, e.message);
 	}
 	return errorResponse('INVALID_CREDENTIALS', 'Invalid credentials', 401);
@@ -182,7 +196,13 @@ export async function handleLogin(request, env) {
 
 export async function handleRegister(request, env, session) {
 	try {
-		const { username, password, isAdmin = false, telegram_user_id } = await request.json();
+		let body;
+		try {
+			body = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { username, password, isAdmin = false, telegram_user_id } = body;
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return errorResponse('INVALID_INPUT', 'Username and password are required.', 400);
 		}
@@ -221,7 +241,7 @@ export async function handleRegister(request, env, session) {
 		).run();
 		return jsonResponse({ success: true, userId });
 	} catch (e) {
-		console.error("Register Error:", e.message);
+		console.error("Register Error:", e);
 		return errorResponse('REGISTER_FAILED', 'Failed to register user', 500, e.message);
 	}
 }
@@ -249,7 +269,12 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 	if (!target) {
 		return errorResponse('USER_NOT_FOUND', 'User not found', 404);
 	}
-	const payload = await request.json();
+	let payload;
+	try {
+		payload = await request.json();
+	} catch (e) {
+		return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+	}
 	const updates = [];
 	const bindings = [];
 
@@ -327,7 +352,7 @@ export async function handleUserDelete(env, targetUserId, session) {
 		await db.prepare("COMMIT").run();
 	} catch (e) {
 		try { await db.prepare("ROLLBACK").run(); } catch (rollbackErr) { console.error("Rollback failed:", rollbackErr.message); }
-		console.error("Delete User Tx Error:", e.message);
+		console.error("Delete User Tx Error:", e);
 		return errorResponse('DELETE_USER_FAILED', 'Failed to delete user', 500, e.message);
 	}
 	// 清理该用户相关的会话

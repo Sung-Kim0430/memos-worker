@@ -596,6 +596,21 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		return tempDiv.innerHTML;
 	}
 
+	function sanitizeMarkdownText(text = '') {
+		return text
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;')
+			.replace(/\(\s*javascript:/gi, '(#')
+			.replace(/\(\s*data:text\/html/gi, '(#');
+	}
+
+	function renderMarkdownSafe(text = '') {
+		return postProcessMarkdownHtml(marked.parse(sanitizeMarkdownText(text)));
+	}
+
 	async function handlePastedImage(imageFile, textarea) {
 		const placeholderId = `uploading-${Date.now()}`;
 		const placeholderMarkdown = `![Uploading image... ${placeholderId}]()`;
@@ -2653,7 +2668,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	function openFullscreenEditor(content = '', noteId = null, options = {}) {
 		currentEditingNoteId = noteId;
 		fsEditorTextarea.value = content;
-		fsPreviewPane.innerHTML = postProcessMarkdownHtml(marked.parse(content));
+		fsPreviewPane.innerHTML = renderMarkdownSafe(content);
 		const targetNote = noteId ? allNotesCache.find(n => n.id === noteId) : null;
 		const vis = targetNote?.visibility || 'private';
 		if (fsVisibilitySelect) {
@@ -2707,7 +2722,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 
 	// 实时更新预览
 	fsEditorTextarea.addEventListener('input', () => {
-		fsPreviewPane.innerHTML = postProcessMarkdownHtml(marked.parse(fsEditorTextarea.value));
+		fsPreviewPane.innerHTML = renderMarkdownSafe(fsEditorTextarea.value);
 	});
 
 	// 点击主创建区的全屏按钮
@@ -4193,7 +4208,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 
 									<div class='edit-files-container'></div>
 							`;
-		noteElement.querySelector('.note-content').innerHTML = postProcessMarkdownHtml(marked.parse(note.content));
+			noteElement.querySelector('.note-content').innerHTML = renderMarkdownSafe(note.content);
 
 		if (isLongContent) {
 			noteElement.querySelector('.note-content.view-mode').classList.add('truncated');
@@ -4362,7 +4377,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 
 	// 实时更新主预览区内容
 	noteInput.addEventListener('input', e => {
-		mainEditPreview.innerHTML = postProcessMarkdownHtml(marked.parse(noteInput.value || ''));
+		mainEditPreview.innerHTML = renderMarkdownSafe(noteInput.value || '');
 		// autoResizeTextarea(noteInput);
 		syncMainEditorLayout();
 	});
@@ -4375,7 +4390,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 
 		if (isPreview) {
 			// 在切换到预览时，确保内容是最新的
-			mainEditPreview.innerHTML = postProcessMarkdownHtml(marked.parse(noteInput.value || ''));
+			mainEditPreview.innerHTML = renderMarkdownSafe(noteInput.value || '');
 		} else {
 			noteInput.focus();
 		}
@@ -4987,7 +5002,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 			if (newMode === 'preview') {
 				const textarea = noteElement.querySelector('.edit-textarea');
 				const preview = noteElement.querySelector('.edit-preview');
-				preview.innerHTML = postProcessMarkdownHtml(marked.parse(textarea.value || ''));
+				preview.innerHTML = renderMarkdownSafe(textarea.value || '');
 			}
 		} else if (splitToggleBtn) {
 			noteElement.classList.toggle('split-mode');
@@ -4995,7 +5010,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 			if (splitToggleBtn.classList.contains('active')) {
 				const textarea = noteElement.querySelector('.edit-textarea');
 				const preview = noteElement.querySelector('.edit-preview');
-				preview.innerHTML = postProcessMarkdownHtml(marked.parse(textarea.value || ''));
+				preview.innerHTML = renderMarkdownSafe(textarea.value || '');
 			}
 		}
 	});
@@ -5083,7 +5098,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		if (noteElement) {
 			const preview = noteElement.querySelector('.edit-preview');
 			if (preview) {
-				preview.innerHTML = postProcessMarkdownHtml(marked.parse(textarea.value || ''));
+				preview.innerHTML = renderMarkdownSafe(textarea.value || '');
 			}
 		}
 		if (e.target.matches('.edit-textarea')) {

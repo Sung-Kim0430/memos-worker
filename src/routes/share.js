@@ -143,7 +143,7 @@ export async function handlePublicFileRequest(publicId, request, env) {
 			const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
 			return Response.redirect(temporaryDownloadUrl, 302);
 		} catch (e) {
-			console.error("Telegram Public Proxy Error:", e.message);
+			console.error("Telegram Public Proxy Error:", e);
 			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
 		}
 	}

@@ -125,7 +125,7 @@ export async function handleSearchRequest(request, env, session) {
 		});
 		return jsonResponse({ notes, hasMore });
 	} catch (e) {
-		console.error("Search Error:", e.message);
+		console.error("Search Error:", e);
 		const isFtsError = (e.message || '').toLowerCase().includes('fts');
 		const message = isFtsError ? 'Invalid search query' : 'Database Error';
 		const status = message === 'Invalid search query' ? 400 : 500;
@@ -158,7 +158,7 @@ export async function handleTagsList(request, env, session) {
 		const { results } = await stmt.bind(...access.bindings).all();
 		return jsonResponse(results);
 	} catch (e) {
-		console.error("Tags List Error:", e.message);
+		console.error("Tags List Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }

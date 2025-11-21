@@ -590,7 +590,13 @@ export async function handleMergeNotes(request, env, session) {
 	const bucket = env.NOTES_R2_BUCKET;
 	let txStarted = false;
 	try {
-		const { sourceNoteId, targetNoteId, addSeparator } = await request.json();
+		let payload;
+		try {
+			payload = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
+		}
+		const { sourceNoteId, targetNoteId, addSeparator } = payload;
 
 		if (!sourceNoteId || !targetNoteId || sourceNoteId === targetNoteId) {
 			return errorResponse('INVALID_INPUT', 'Invalid source or target note ID.', 400);
@@ -797,7 +803,7 @@ export async function handleMergeNotes(request, env, session) {
 			} catch (cleanupErr) {
 				console.error("Cleanup copied objects failed:", cleanupErr.message);
 			}
-			console.error("Merge Notes Error:", e.message, e.cause);
+			console.error("Merge Notes Error:", e);
 		return errorResponse('MERGE_FAILED', 'Database or R2 error during merge', 500, e.message);
 	}
 }

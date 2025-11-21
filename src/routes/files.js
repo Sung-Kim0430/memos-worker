@@ -44,7 +44,7 @@ export async function handleFileRequest(noteId, fileId, request, env, session) {
 				files = note.files;
 			}
 		} catch (e) {
-			console.error("Failed to parse files metadata for note:", id, e.message);
+			console.error("Failed to parse files metadata for note:", id, e);
 			files = [];
 		}
 	}

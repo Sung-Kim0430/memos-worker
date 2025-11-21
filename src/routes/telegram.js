@@ -159,14 +159,14 @@ export async function handleTelegramProxy(request, env, session) {
 		// 2. 构建临时的下载链接
 		const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
 
-		// 3. 返回 302 重定向
-		return Response.redirect(temporaryDownloadUrl, 302);
+			// 3. 返回 302 重定向
+			return Response.redirect(temporaryDownloadUrl, 302);
 
-	} catch (e) {
-		console.error("Telegram Proxy Error:", e.message);
-		return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
+		} catch (e) {
+			console.error("Telegram Proxy Error:", e);
+			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
+		}
 	}
-}
 
 export async function handleTelegramWebhook(request, env, secret) {
 	if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
@@ -178,7 +178,12 @@ export async function handleTelegramWebhook(request, env, secret) {
 	let noteId = null;
 	const cleanupKeys = [];
 	try {
-		const update = await request.json();
+		let update;
+		try {
+			update = await request.json();
+		} catch (e) {
+			return errorResponse('INVALID_JSON', 'Invalid Telegram payload', 400);
+		}
 		const message = update.message || update.channel_post;
 		if (!message) {
 			return new Response('OK', { status: 200 });
@@ -413,15 +418,16 @@ export async function handleTelegramWebhook(request, env, secret) {
 		await sendTelegramMessage(chatId, `✅ 笔记已保存！ (ID: ${noteId})`, botToken);
 
 		} catch (e) {
-			console.error("Telegram Webhook Error:", e.message);
+			console.error("Telegram Webhook Error:", e);
 			if (noteId) {
 				try {
 					await env.DB.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId).run();
 					await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
-				} catch (cleanupError) {
-					console.error("Failed to cleanup note:", cleanupError.message);
-				}
+			} catch (cleanupError) {
+				console.error("Failed to cleanup note:", cleanupError.message);
 			}
+			try { await cleanupUnusedTags(env.DB); } catch (cleanupError) { console.error("Cleanup unused tags failed:", cleanupError.message); }
+		}
 		if (cleanupKeys.length > 0) {
 			try {
 				await bucket.delete(cleanupKeys);

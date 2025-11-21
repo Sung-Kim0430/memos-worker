@@ -41,7 +41,7 @@ export async function handleStandaloneImageUpload(request, env, session) {
 		return jsonResponse({ success: true, url: imageUrl });
 
 	} catch (e) {
-		console.error("Standalone Image Upload Error:", e.message);
+		console.error("Standalone Image Upload Error:", e);
 		return errorResponse('UPLOAD_FAILED', 'Upload failed', 500, e.message);
 	}
 }
@@ -90,7 +90,7 @@ export async function handleImgurProxyUpload(request, env) {
 		return jsonResponse({ success: true, url: result.data.link });
 
 	} catch (e) {
-		console.error("Imgur Proxy Error:", e.message);
+		console.error("Imgur Proxy Error:", e);
 		return errorResponse('IMGUR_UPLOAD_FAILED', 'Imgur upload failed via proxy', 500, e.message);
 	}
 }
@@ -166,7 +166,7 @@ export async function handleGetAllAttachments(request, env, session) {
 		});
 
 	} catch (e) {
-		console.error("Get All Attachments Error:", e.message);
+		console.error("Get All Attachments Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
