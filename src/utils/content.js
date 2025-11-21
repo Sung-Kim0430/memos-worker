@@ -29,14 +29,30 @@ export function extractVideoUrls(content) {
  */
 export function buildTree(nodes, parentId = null) {
 	const tree = [];
-	nodes
-		.filter(node => node.parent_id === parentId)
-		.forEach(node => {
-			const children = buildTree(nodes, node.id);
-			if (children.length > 0) {
-				node.children = children;
+	const byParent = nodes.reduce((acc, node) => {
+		const key = node.parent_id || null;
+		if (!acc.has(key)) acc.set(key, []);
+		acc.get(key).push(node);
+		return acc;
+	}, new Map());
+
+	const stack = [{ parent: parentId, container: tree }];
+	const seen = new Set();
+
+	while (stack.length) {
+		const { parent, container } = stack.pop();
+		const children = byParent.get(parent) || [];
+		for (const child of children) {
+			if (seen.has(child.id)) {
+				continue; // 防止环导致死循环
 			}
-			tree.push(node);
-		});
+			seen.add(child.id);
+			const node = { ...child };
+			container.push(node);
+			const childContainer = [];
+			node.children = childContainer;
+			stack.push({ parent: child.id, container: childContainer });
+		}
+	}
 	return tree;
 }

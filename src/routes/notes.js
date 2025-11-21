@@ -322,8 +322,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						const nextVideoList = Array.isArray(videoUrls) ? videoUrls : [];
 
 						// 在处理完文件删除后，检查笔记是否应该被删除
-						const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
-						if (content.trim() === '' && currentFiles.length === 0 && nextPicList.length === 0 && nextVideoList.length === 0 && !hasNewFiles) {
+							const hasNewFiles = formData.getAll('file').some(f => f.name && f.size > 0);
+							const allowAutoDelete = formData.get('delete_if_empty') === 'true';
+							if (allowAutoDelete && content.trim() === '' && currentFiles.length === 0 && nextPicList.length === 0 && nextVideoList.length === 0 && !hasNewFiles) {
 							// 笔记即将变空，执行删除操作（带并发保护）
 							const attachmentKeys = existingNote.files.map(file => `${id}/${file.id}`);
 							const picKeys = existingPics.map(url => {
@@ -630,17 +631,37 @@ export async function handleMergeNotes(request, env, session) {
 		const separator = addSeparator ? '\n\n---\n\n' : '\n\n';
 		let mergedContent = targetNote.content + separator + sourceNote.content;
 
-		// Move source attachments to the target note and rewrite URLs in the merged content
-		for (const file of sourceFiles) {
-			const copied = await copyObjectIfExists(file.id);
-			if (copied) {
-				const oldUrl = `/api/files/${sourceNote.id}/${file.id}`;
-				const newUrl = `/api/files/${targetNote.id}/${file.id}`;
-				mergedContent = replaceMarkdownUrl(mergedContent, oldUrl, newUrl);
+	// Move source attachments to the target note and rewrite URLs in the merged content
+	const mergedFiles = [];
+	const existingIds = new Set();
+	for (const f of targetFiles) {
+		if (f?.id && !existingIds.has(f.id)) {
+			mergedFiles.push(f);
+			existingIds.add(f.id);
+		}
+	}
+	for (const file of sourceFiles) {
+		const copied = await copyObjectIfExists(file.id);
+		if (copied) {
+			let finalFileId = file.id;
+			if (!finalFileId || existingIds.has(finalFileId)) {
+				finalFileId = crypto.randomUUID();
+			}
+			const oldUrl = `/api/files/${sourceNote.id}/${file.id}`;
+			const newUrl = `/api/files/${targetNote.id}/${finalFileId}`;
+			mergedContent = replaceMarkdownUrl(mergedContent, oldUrl, newUrl);
+			if (!existingIds.has(finalFileId)) {
+				existingIds.add(finalFileId);
+				mergedFiles.push({ ...file, id: finalFileId });
+				if (!copiedFileIds.has(finalFileId)) {
+					// 如果生成了新 ID，确保对象被复制到新 key
+					const newKey = `${targetNote.id}/${finalFileId}`;
+					const oldKey = `${sourceNote.id}/${file.id}`;
+					try { await copyObject(oldKey, newKey); } catch (e) { console.error("Copy attachment with new id failed:", e.stack || e.message); }
+				}
 			}
 		}
-		// Only keep source attachments that were successfully moved to the target note
-		const mergedFiles = [...targetFiles, ...sourceFiles.filter(file => copiedFileIds.has(file.id))];
+	}
 
 		const rewriteInlineMedia = async (urls) => {
 			const rewritten = [];

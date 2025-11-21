@@ -95,16 +95,20 @@ export async function handleDocsNodeCreate(request, env, session) {
 }
 
 async function getAllDescendantIds(db, parentId) {
-	let descendantIds = [];
-	const stmt = db.prepare("SELECT id FROM nodes WHERE parent_id = ?");
-	const { results } = await stmt.bind(parentId).all();
-
-	for (const row of results) {
-		descendantIds.push(row.id);
-		const childDescendants = await getAllDescendantIds(db, row.id);
-		descendantIds = descendantIds.concat(childDescendants);
+	const ids = [];
+	const queue = [parentId];
+	const seen = new Set();
+	while (queue.length) {
+		const current = queue.shift();
+		const { results } = await db.prepare("SELECT id FROM nodes WHERE parent_id = ?").bind(current).all();
+		for (const row of results || []) {
+			if (seen.has(row.id)) continue;
+			seen.add(row.id);
+			ids.push(row.id);
+			queue.push(row.id);
+		}
 	}
-	return descendantIds;
+	return ids;
 }
 
 export async function handleDocsNodeDelete(request, nodeId, env, session) {
