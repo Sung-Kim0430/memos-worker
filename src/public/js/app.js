@@ -14,6 +14,29 @@ let themePreference = localStorage.getItem(STORAGE_KEYS.theme);
 if (!THEME_OPTIONS.includes(themePreference)) {
 	themePreference = 'system';
 }
+function getCsrfToken() {
+	const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+	return match ? decodeURIComponent(match[1]) : '';
+}
+
+// Wrap window.fetch to automatically attach CSRF token for mutating requests
+const __originalFetch = window.fetch.bind(window);
+window.fetch = (url, options = {}) => {
+	const opts = options || {};
+	const method = (opts.method || 'GET').toUpperCase();
+	if (method !== 'GET' && method !== 'HEAD') {
+		const token = getCsrfToken();
+		if (token) {
+			if (opts.headers instanceof Headers) {
+				opts.headers.set('x-csrf-token', token);
+			} else {
+				opts.headers = { ...(opts.headers || {}), 'x-csrf-token': token };
+			}
+		}
+	}
+	return __originalFetch(url, opts);
+};
+
 const textNodeOriginals = new WeakMap();
 let timelineDataCache = null;
 const getLocale = () => i18n.locale;
