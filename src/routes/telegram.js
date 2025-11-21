@@ -1,8 +1,10 @@
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
 import { ensureAdminUser } from './auth.js';
 import { ALLOWED_UPLOAD_MIME_TYPES, DEFAULT_USER_SETTINGS, MAX_UPLOAD_BYTES } from '../constants.js';
-import { errorResponse } from '../utils/response.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
+
+const TG_PROXY_PREFIX = 'tg-proxy:';
 
 function parseAuthorizedIds(raw) {
 	if (!raw) return [];
@@ -15,6 +17,16 @@ function exceedsSizeLimit(size) {
 
 function isAllowedMimeType(mime) {
 	return !!mime && ALLOWED_UPLOAD_MIME_TYPES.includes(mime);
+}
+
+async function createTelegramProxyMapping(env, fileId, mediaType, mimeType = null) {
+	const proxyId = crypto.randomUUID();
+	await env.NOTES_KV.put(`${TG_PROXY_PREFIX}${proxyId}`, JSON.stringify({ fileId, mediaType, mimeType }));
+	return proxyId;
+}
+
+async function resolveTelegramProxyMapping(env, proxyId) {
+	return env.NOTES_KV.get(`${TG_PROXY_PREFIX}${proxyId}`, 'json');
 }
 
 async function resolveTelegramUser(env, telegramUserId) {
@@ -134,10 +146,12 @@ export async function handleTelegramProxy(request, env, session) {
 		return errorResponse('INVALID_INPUT', 'Invalid file_id', 400);
 	}
 
-	const fileId = match[1];
-	if (!/^[A-Za-z0-9_-]+$/.test(fileId)) {
+	const proxyId = match[1];
+	if (!/^[A-Za-z0-9_-]+$/.test(proxyId)) {
 		return errorResponse('INVALID_INPUT', 'Invalid file_id', 400);
 	}
+	const mapping = await resolveTelegramProxyMapping(env, proxyId);
+	const fileId = mapping?.fileId || proxyId;
 	const botToken = env.TELEGRAM_BOT_TOKEN;
 
 	if (!botToken) {
@@ -147,14 +161,14 @@ export async function handleTelegramProxy(request, env, session) {
 
 	try {
 		// 1. 调用 getFile API
-		const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`;
-		const fileInfoRes = await fetch(getFileUrl);
-		const fileInfo = await fileInfoRes.json();
+			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`;
+			const fileInfoRes = await fetch(getFileUrl);
+			const fileInfo = await fileInfoRes.json();
 
-		if (!fileInfo.ok) {
-			console.error(`Telegram getFile API error for file_id ${fileId}:`, fileInfo.description);
-			return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
-		}
+			if (!fileInfo.ok) {
+				console.error(`Telegram getFile API error for file_id ${fileId}:`, fileInfo.description, fileInfo);
+				return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
+			}
 
 		// 2. 构建临时的下载链接
 		const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
@@ -186,13 +200,13 @@ export async function handleTelegramWebhook(request, env, secret) {
 		}
 		const message = update.message || update.channel_post;
 		if (!message) {
-			return new Response('OK', { status: 200 });
+			return jsonResponse({ success: true });
 		}
 
 		const authorizedEntries = parseAuthorizedIds(env.AUTHORIZED_TELEGRAM_IDS);
 		if (authorizedEntries.length === 0) {
 			console.error("安全警告：AUTHORIZED_TELEGRAM_IDS 环境变量未设置。");
-			return new Response('OK', { status: 200 });
+			return jsonResponse({ success: true });
 		}
 		chatId = message.chat.id;
 		const senderId = message.from?.id;
@@ -200,7 +214,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 		const mappingEntry = authorizedEntries.find(entry => entry.split(':')[0] === senderIdStr);
 		if (!mappingEntry) {
 			console.log(`已阻止来自未授权或未知用户 ${senderId || ''} 的请求。`);
-			return new Response('OK', { status: 200 });
+			return jsonResponse({ success: true });
 		}
 		const mappedUsername = mappingEntry.split(':')[1];
 		let ownerUser = null;
@@ -268,14 +282,14 @@ export async function handleTelegramWebhook(request, env, secret) {
 		if (document?.mime_type && !isAllowedMimeType(document.mime_type)) {
 			validationErrors.push('不支持的文件类型');
 		}
-		if (validationErrors.length > 0) {
-			await sendTelegramMessage(chatId, `❌ 无法保存笔记：${validationErrors.join('、')}（上限 ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))}MB）`, botToken);
-			return new Response('OK', { status: 200 });
-		}
+			if (validationErrors.length > 0) {
+				await sendTelegramMessage(chatId, `❌ 无法保存笔记：${validationErrors.join('、')}（上限 ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))}MB）`, botToken);
+				return jsonResponse({ success: true });
+			}
 
-		if (!contentFromTelegram.trim() && !photo && !document && !video) {
-			return new Response('OK', { status: 200 });
-		}
+			if (!contentFromTelegram.trim() && !photo && !document && !video) {
+				return jsonResponse({ success: true });
+			}
 		const settings = await env.NOTES_KV.get('user_settings', 'json') || DEFAULT_USER_SETTINGS;
 
 		// 1) 创建一个空内容的 note 占位
@@ -292,14 +306,15 @@ export async function handleTelegramWebhook(request, env, secret) {
 		const mediaEmbeds = [];
 		const videoObjects = [];
 
-		// --- 处理照片 ---
-		if (photo) {
-			if (settings.telegramProxy) {
-				// --- 代理模式 ---
-				const proxyUrl = `/api/tg-media-proxy/${photo.file_id}`;
-				mediaEmbeds.push(`![tg-image](${proxyUrl})`);
-				picObjects.push(proxyUrl);
-			} else {
+			// --- 处理照片 ---
+			if (photo) {
+				if (settings.telegramProxy) {
+					// --- 代理模式 ---
+					const proxyId = await createTelegramProxyMapping(env, photo.file_id, 'photo', 'image');
+					const proxyUrl = `/api/tg-media-proxy/${proxyId}`;
+					mediaEmbeds.push(`![tg-image](${proxyUrl})`);
+					picObjects.push(proxyUrl);
+				} else {
 				// --- 二次上传模式 ---
 				const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${photo.file_id}`;
 				const fileInfoRes = await fetch(getFileUrl);
@@ -323,13 +338,14 @@ export async function handleTelegramWebhook(request, env, secret) {
 			}
 		}
 
-		if (video) {
-			if (settings.telegramProxy) {
-				// --- 代理模式 ---
-				const proxyUrl = `/api/tg-media-proxy/${video.file_id}`;
-				videoObjects.push(proxyUrl);
-				mediaEmbeds.push(`[tg-video](${proxyUrl})`);
-			} else {
+			if (video) {
+				if (settings.telegramProxy) {
+					// --- 代理模式 ---
+					const proxyId = await createTelegramProxyMapping(env, video.file_id, 'video', video.mime_type || 'video/mp4');
+					const proxyUrl = `/api/tg-media-proxy/${proxyId}`;
+					videoObjects.push(proxyUrl);
+					mediaEmbeds.push(`[tg-video](${proxyUrl})`);
+				} else {
 				// --- 二次上传模式 ---
 				const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${video.file_id}`;
 				const fileInfoRes = await fetch(getFileUrl);
@@ -356,18 +372,19 @@ export async function handleTelegramWebhook(request, env, secret) {
 			}
 		}
 
-		if (document) {
-			if (settings.telegramProxy) {
-				// --- 代理模式 ---
-				// 只存储 file_id, 不拉取文件内容
-				filesMeta.push({
-					id: crypto.randomUUID(),
-					type: 'telegram_document', // 特殊类型标记
-					file_id: document.file_id,
-					mime_type: document.mime_type || 'application/octet-stream',
-					name: document.file_name,
-					size: document.file_size
-				});
+			if (document) {
+				if (settings.telegramProxy) {
+					// --- 代理模式 ---
+					// 只存储 file_id, 不拉取文件内容
+					const proxyId = await createTelegramProxyMapping(env, document.file_id, 'document', document.mime_type || 'application/octet-stream');
+					filesMeta.push({
+						id: proxyId,
+						type: 'telegram_document', // 特殊类型标记
+						file_id: proxyId,
+						mime_type: document.mime_type || 'application/octet-stream',
+						name: document.file_name,
+						size: document.file_size
+					});
 				// 可以在正文加一个占位符，但这需要前端支持渲染
 				// finalContent += `\n\n[Proxy File: ${document.file_name}]`;
 			} else {
@@ -428,19 +445,19 @@ export async function handleTelegramWebhook(request, env, secret) {
 			}
 			try { await cleanupUnusedTags(env.DB); } catch (cleanupError) { console.error("Cleanup unused tags failed:", cleanupError.message); }
 		}
-		if (cleanupKeys.length > 0) {
-			try {
-				await bucket.delete(cleanupKeys);
-			} catch (cleanupError) {
-				console.error("Failed to cleanup uploaded files:", cleanupError.message);
+			if (cleanupKeys.length > 0) {
+				try {
+					await bucket.delete(cleanupKeys);
+				} catch (cleanupError) {
+					console.error("Failed to cleanup uploaded files:", cleanupError.message);
+				}
+			}
+			if (chatId && botToken) {
+				await sendTelegramMessage(chatId, `❌ 保存笔记时出错: ${e.message}`, botToken);
 			}
 		}
-		if (chatId && botToken) {
-			await sendTelegramMessage(chatId, `❌ 保存笔记时出错: ${e.message}`, botToken);
-		}
+		return jsonResponse({ success: true });
 	}
-	return new Response('OK', { status: 200 });
-}
 
 export async function sendTelegramMessage(chatId, text, botToken) {
 	const url = `https://api.telegram.org/bot${botToken}/sendMessage`;

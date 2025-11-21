@@ -202,12 +202,22 @@ export async function handleRegister(request, env, session) {
 		} catch (e) {
 			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
 		}
+		if (!body || typeof body !== 'object' || Array.isArray(body)) {
+			return errorResponse('INVALID_INPUT', 'Invalid payload shape.', 400);
+		}
 		const { username, password, isAdmin = false, telegram_user_id } = body;
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return errorResponse('INVALID_INPUT', 'Username and password are required.', 400);
 		}
 		const totalUsers = await getUserCount(env);
-		if (totalUsers > 0 && (!session || !session.isAdmin)) {
+
+		// 首次创建管理员需要提供预共享口令，避免被抢注
+		if (totalUsers === 0) {
+			const bootstrapToken = request.headers.get('x-admin-bootstrap-token') || body.bootstrapToken;
+			if (!env.ADMIN_BOOTSTRAP_TOKEN || bootstrapToken !== env.ADMIN_BOOTSTRAP_TOKEN) {
+				return errorResponse('BOOTSTRAP_FORBIDDEN', 'Admin bootstrap token is required.', 403);
+			}
+		} else if (!session || !session.isAdmin) {
 			return errorResponse('FORBIDDEN', 'Only admin can create new users.', 403);
 		}
 		if (await getUserByUsername(env, username)) {
@@ -275,10 +285,16 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 	} catch (e) {
 		return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
 	}
+	if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+		return errorResponse('INVALID_INPUT', 'Invalid payload shape.', 400);
+	}
 	const updates = [];
 	const bindings = [];
 
 	if (payload.username) {
+		if (typeof payload.username !== 'string' || !payload.username.trim()) {
+		 return errorResponse('INVALID_INPUT', 'Username must be a non-empty string.', 400);
+		}
 		const exists = await env.DB.prepare("SELECT id FROM users WHERE username = ? AND id != ?").bind(payload.username, targetUserId).first();
 		if (exists) {
 			return errorResponse('USERNAME_EXISTS', 'Username already exists.', 400);
@@ -298,6 +314,9 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		bindings.push(tgId);
 	}
 	if (payload.hasOwnProperty('is_admin')) {
+		if (typeof payload.is_admin !== 'boolean') {
+			return errorResponse('INVALID_INPUT', 'is_admin must be a boolean.', 400);
+		}
 		const keepAdmin = payload.is_admin ? 1 : 0;
 		if (!keepAdmin) {
 			const hasOtherAdmin = await ensureAtLeastOneAdmin(env, targetUserId);
@@ -309,6 +328,9 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		bindings.push(keepAdmin);
 	}
 	if (payload.password) {
+		if (typeof payload.password !== 'string' || !payload.password.trim()) {
+			return errorResponse('INVALID_INPUT', 'Password must be a non-empty string.', 400);
+		}
 		const { hash, salt } = await hashPassword(payload.password);
 		updates.push("password_hash = ?");
 		bindings.push(hash);

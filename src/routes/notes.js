@@ -244,22 +244,22 @@ export async function handleNotesList(request, env, session) {
 					attachSafeContent(newNote);
 
 					return jsonResponse(newNote, 201);
-				} catch (err) {
-					// 回滚已上传的对象和占位笔记，避免脏数据
-					if (uploadedKeys.length > 0) {
-						try { await env.NOTES_R2_BUCKET.delete(uploadedKeys); } catch (cleanupErr) { console.error("Cleanup uploaded files failed:", cleanupErr.message); }
-					}
-					if (createdNoteId) {
-						try {
-							await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(createdNoteId).run();
-							await db.prepare("DELETE FROM notes WHERE id = ?").bind(createdNoteId).run();
-						} catch (cleanupErr) {
-							console.error("Cleanup created note failed:", cleanupErr.message);
+					} catch (err) {
+						// 回滚已上传的对象和占位笔记，避免脏数据
+						if (uploadedKeys.length > 0) {
+							try { await env.NOTES_R2_BUCKET.delete(uploadedKeys); } catch (cleanupErr) { console.error("Cleanup uploaded files failed:", cleanupErr); }
 						}
+						if (createdNoteId) {
+							try {
+								await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(createdNoteId).run();
+								await db.prepare("DELETE FROM notes WHERE id = ?").bind(createdNoteId).run();
+							} catch (cleanupErr) {
+								console.error("Cleanup created note failed:", cleanupErr);
+							}
+						}
+						throw err;
 					}
-					throw err;
 				}
-			}
 		}
 	} catch (e) {
 		console.error("D1 Error:", e);
@@ -331,6 +331,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
 						} catch (e) {
 							return errorResponse('INVALID_INPUT', 'Invalid filesToDelete payload', 400);
+						}
+						if (!Array.isArray(filesToDelete) || !filesToDelete.every(id => typeof id === 'string')) {
+							return errorResponse('INVALID_INPUT', 'filesToDelete must be an array of string ids', 400);
 						}
 						if (filesToDelete.length > 0) {
 							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
@@ -427,12 +430,12 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							id,
 							originalUpdatedAt
 						).run();
-						if (!updateResult.meta?.changes) {
-							if (newUploads.length > 0) {
-								try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr.message); }
+							if (!updateResult.meta?.changes) {
+								if (newUploads.length > 0) {
+									try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr); }
+								}
+								return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 							}
-							return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
-						}
 						await processNoteTags(db, id, content);
 						await cleanupUnusedTags(db);
 						lastKnownUpdatedAt = newTimestamp;
@@ -491,7 +494,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				return jsonResponse(updatedNote);
 			} catch (err) {
 				if (newUploads.length > 0) {
-					try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr.message); }
+					try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr); }
 				}
 				throw err;
 			}
@@ -547,7 +550,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							await env.NOTES_R2_BUCKET.delete(keys);
 						}
 					} catch (fallbackErr) {
-						console.error("Failed to list/delete orphaned R2 objects for note:", id, fallbackErr.message);
+						console.error("Failed to list/delete orphaned R2 objects for note:", id, fallbackErr);
 					}
 				}
 
@@ -745,7 +748,7 @@ export async function handleMergeNotes(request, env, session) {
 			if (!updateResult.meta?.changes) {
 				await db.prepare("ROLLBACK").run();
 				if (newObjectKeys.size > 0) {
-					try { await bucket.delete([...newObjectKeys]); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
+					try { await bucket.delete([...newObjectKeys]); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr); }
 				}
 				return errorResponse('CONFLICT', 'Conflict: target note was modified, please retry.', 409);
 			}
@@ -755,7 +758,7 @@ export async function handleMergeNotes(request, env, session) {
 		if (!deleteResult.meta?.changes) {
 			await db.prepare("ROLLBACK").run();
 			if (newObjectKeys.size > 0) {
-				try { await bucket.delete([...newObjectKeys]); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
+				try { await bucket.delete([...newObjectKeys]); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr); }
 			}
 			return errorResponse('CONFLICT', 'Conflict: source note was modified, please retry.', 409);
 		}
@@ -772,7 +775,7 @@ export async function handleMergeNotes(request, env, session) {
 				await bucket.delete(keys);
 			}
 		} catch (cleanupErr) {
-			console.error("Cleanup source note objects failed:", cleanupErr.message);
+			console.error("Cleanup source note objects failed:", cleanupErr);
 		}
 
 		// 返回更新后的目标笔记
@@ -801,7 +804,7 @@ export async function handleMergeNotes(request, env, session) {
 					await bucket.delete([...newObjectKeys]);
 				}
 			} catch (cleanupErr) {
-				console.error("Cleanup copied objects failed:", cleanupErr.message);
+				console.error("Cleanup copied objects failed:", cleanupErr);
 			}
 			console.error("Merge Notes Error:", e);
 		return errorResponse('MERGE_FAILED', 'Database or R2 error during merge', 500, e.message);

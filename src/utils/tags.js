@@ -33,19 +33,21 @@ export async function processNoteTags(db, noteId, content) {
 		const placeholders = uniqueTags.map(() => '(?)').join(',');
 		await db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES ${placeholders}`).bind(...uniqueTags).run();
 
+		const selectPlaceholders = uniqueTags.map(() => '?').join(',');
 		const tagRows = await db.prepare(
-			`SELECT id, name FROM tags WHERE name IN (${uniqueTags.map(() => '?').join(',')})`
+			`SELECT id, name FROM tags WHERE name IN (${selectPlaceholders})`
 		).bind(...uniqueTags).all();
 
-		const idByName = new Map(tagRows.results.map(row => [row.name, row.id]));
-		for (const tagName of uniqueTags) {
-			const tagId = idByName.get(tagName);
-			if (tagId) {
-				statements.push(
-					db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)")
-						.bind(noteId, tagId)
-				);
-			}
+		const tagIds = (tagRows.results || []).map(row => row.id).filter(Boolean);
+		if (tagIds.length > 0) {
+			const values = tagIds.map(() => '(?, ?)').join(',');
+			const bindings = [];
+			tagIds.forEach(tagId => {
+				bindings.push(noteId, tagId);
+			});
+			statements.push(
+				db.prepare(`INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES ${values}`).bind(...bindings)
+			);
 		}
 	}
 
