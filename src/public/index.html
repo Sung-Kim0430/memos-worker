@@ -793,6 +793,15 @@
 		font-size: 0.95rem;
 	}
 
+	.setting-item.user-table-block {
+		display: block;
+		padding-left: 0;
+	}
+
+	.user-table-block .user-admin-subtitle {
+		margin-bottom: 0.75rem;
+	}
+
 	.setting-item.user-admin-form {
 		display: grid;
 		grid-template-columns: 1fr;
@@ -814,11 +823,13 @@
 
 	.setting-item.user-admin-form .user-admin-field .user-input {
 		width: 100%;
-		max-width: 100%;
+		max-width: 60%;
 		padding: 6px 10px;
-		height: 36px;
+		height: auto;
 		border-radius: 4px;
 		background: var(--bg-color);
+		border: 1px solid var(--border-color);
+		font-size: 0.9rem;
 	}
 
 	.user-admin-inline {
@@ -828,7 +839,8 @@
 		gap: 0.75rem;
 		flex-wrap: wrap;
 		width: 100%;
-		max-width: 480px;
+		max-width: 100%;
+		justify-content: flex-end;
 	}
 
 	.user-admin-inline .user-admin-field {
@@ -885,11 +897,18 @@
 		gap: 0.5rem;
 		padding-top: 0;
 		align-items: center;
+		margin-left: auto;
 	}
 
 	.user-admin-actions .btn {
-		padding: 8px 16px;
-		font-size: 0.9rem;
+		padding: 6px 12px;
+		font-size: 0.85rem;
+	}
+
+	@media (max-width: 640px) {
+		.setting-item.user-admin-form .user-admin-field .user-input {
+			max-width: 100%;
+		}
 	}
 
 	.user-table-wrapper {
@@ -1030,7 +1049,7 @@
 		cursor: pointer;
 		transition: all 0.2s ease;
 		white-space: normal;
-		width: 140px;
+		width: 120px;
 		max-width: 100%;
 		text-align: center;
 	}
@@ -2607,6 +2626,8 @@
 		color: var(--text-secondary);
 		font-size: 1rem;
 		text-transform: uppercase;
+		padding-bottom: 0.6rem;
+		border-bottom: 1px solid var(--border-color);
 	}
 
 	.setting-item {
@@ -4225,11 +4246,11 @@
 								<span>Admin</span>
 							</label>
 							<div class='user-admin-actions'>
-								<button type='submit' class='btn btn-primary'>Create User</button>
+								<button type='submit' class='btn btn-secondary btn-sm'>Create User</button>
 							</div>
 						</div>
 					</form>
-					<div class='setting-item'>
+					<div class='setting-item user-table-block'>
 						<div class='user-admin-subtitle'>User List</div>
 						<div class='user-table-wrapper'>
 							<table id='user-table' class='user-table' aria-label='User list'>
@@ -4507,8 +4528,8 @@
 				copied: 'Copied!',
 				copyCode: 'Copy code',
 				copyFailed: 'Copy failed!',
-				lightMode: 'Light Mode',
-				darkMode: 'Dark Mode',
+				lightMode: 'Light',
+				darkMode: 'Dark',
 				systemMode: 'System',
 				note: 'note',
 				notes: 'notes',
@@ -4587,9 +4608,9 @@
 				copied: '已复制！',
 				copyCode: '复制代码',
 				copyFailed: '复制失败！',
-				lightMode: '浅色模式',
-				darkMode: '深色模式',
-				systemMode: '跟随系统',
+				lightMode: '浅色',
+				darkMode: '深色',
+				systemMode: '系统',
 				note: '条笔记',
 				notes: '条笔记',
 				homeTabTitle: '主页',
@@ -4611,7 +4632,9 @@
 				'Upload failed': '上传失败',
 				'File deleted successfully.': '文件删除成功。',
 				'File and empty note removed.': '文件和空笔记已删除。',
-				'Notes merged successfully!': '笔记合并成功！'
+				'Notes merged successfully!': '笔记合并成功！',
+				'Failed to update Telegram ID': '更新 Telegram ID 失败',
+				'Enter new Telegram User ID:': '输入新的 Telegram 用户 ID：'
 			},
 			textMap: {
 				'Login': '登录',
@@ -4783,6 +4806,7 @@
 				'User Management (Admin)': '用户管理（管理员）',
 				'Telegram User ID (optional)': 'Telegram 用户 ID（可选）',
 				'Create User': '创建用户',
+				'User List': '用户列表',
 				'Admin': '管理员',
 				'Created': '创建时间',
 				'Actions': '操作',
@@ -4794,6 +4818,7 @@
 				'Make Admin': '设为管理员',
 				'Revoke Admin': '撤销管理员',
 				'Reset Password': '重置密码',
+				'Change TGID': '更改 TGID',
 				'Password reset': '密码已重置',
 				'User created': '用户已创建',
 				'User updated': '用户已更新',
@@ -7968,6 +7993,7 @@
 		const yesLabel = translateMessage('Yes');
 		const noLabel = translateMessage('No');
 		const resetPasswordLabel = translateMessage('Reset Password');
+		const changeTgidLabel = translateMessage('Change TGID');
 		if (!users.length) {
 			userTableBody.innerHTML = `<tr><td colspan="5" class="user-table-empty">${translateMessage('No users.')}</td></tr>`;
 			return;
@@ -7988,6 +8014,7 @@
 						<div class="user-actions" role="group" aria-label="${translateMessage('Actions')}">
 							<button class="user-action btn-accent" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
 							<button class="user-action" data-action="reset-password">${resetPasswordLabel}</button>
+							<button class="user-action" data-action="change-telegram">${changeTgidLabel}</button>
 							<button class="user-action btn-danger" data-action="delete-user">${translateMessage('Delete')}</button>
 						</div>
 					</td>
@@ -8767,6 +8794,20 @@
 					const data = await res.json();
 					if (!res.ok) throw new Error(data.error || 'Failed to reset password');
 					showToast('Password reset');
+				} else if (action === 'change-telegram') {
+					const currentTgid = row?.querySelector('.telegram-cell')?.textContent?.trim() || '';
+					const promptLabel = translateMessage('Enter new Telegram User ID:');
+					const nextTgid = prompt(promptLabel, currentTgid === '-' ? '' : currentTgid);
+					if (nextTgid === null) return;
+					const trimmed = nextTgid.trim();
+					const res = await fetch(`/api/users/${userId}`, {
+						method: 'PUT',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ telegram_user_id: trimmed || null }),
+					});
+					const data = await res.json();
+					if (!res.ok) throw new Error(data.error || 'Failed to update Telegram ID');
+					showToast('User updated');
 				} else if (action === 'delete-user') {
 					const confirmed = await showCustomConfirm('Delete this user?');
 					if (!confirmed) return;
