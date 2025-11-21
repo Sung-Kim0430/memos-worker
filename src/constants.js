@@ -6,6 +6,19 @@ export const SESSION_COOKIE = '__session';
 export const PBKDF2_ITERATIONS = 100000; // Workers 限制 100k 以内
 export const LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 10;
 export const LOGIN_RATE_LIMIT_WINDOW_SECONDS = 10 * 60;
+export const ALLOWED_UPLOAD_MIME_TYPES = [
+	'image/jpeg',
+	'image/png',
+	'image/gif',
+	'image/webp',
+	'image/avif',
+	'image/svg+xml',
+	'video/mp4',
+	'video/webm',
+	'video/ogg',
+	'application/pdf',
+	'text/plain',
+];
 
 export const MAX_TIME_RANGE_MS = 365 * 24 * 60 * 60 * 1000; // 时间范围上限（默认 1 年）
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 单次上传大小上限 10MB

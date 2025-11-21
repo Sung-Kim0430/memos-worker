@@ -162,6 +162,35 @@ const shareTranslations = {
 	}
 };
 const LANGUAGE_STORAGE_KEY = 'memos-lang';
+const escapeHtml = (str = '') => str
+	.replace(/&/g, '&amp;')
+	.replace(/</g, '&lt;')
+	.replace(/>/g, '&gt;')
+	.replace(/"/g, '&quot;')
+	.replace(/'/g, '&#39;');
+const renderer = new marked.Renderer();
+const originalLink = renderer.link.bind(renderer);
+const originalImage = renderer.image.bind(renderer);
+renderer.html = (html) => escapeHtml(html);
+renderer.link = function (token) {
+	const href = (token?.href || '').trim().toLowerCase();
+	if (href.startsWith('javascript:')) {
+		return escapeHtml(token.text || '');
+	}
+	let html = originalLink(token);
+	if (html.startsWith('<a ')) {
+		html = html.replace('<a ', '<a target="_blank" rel="noopener noreferrer" ');
+	}
+	return html;
+};
+renderer.image = function (href, title, text) {
+	const safeHref = (href || '').trim().toLowerCase();
+	if (safeHref.startsWith('javascript:')) {
+		return '';
+	}
+	return originalImage(href, title, text);
+};
+marked.setOptions({ renderer });
 let currentLanguage = (() => {
 	const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
 	if (saved && shareSupportedLanguages.includes(saved)) return saved;
@@ -286,14 +315,15 @@ function renderNote(note) {
 		attachmentsHTML += '<div class="attachments-grid">';
 		files.forEach(file => {
 			if (file.public_url) {
+				const safeName = escapeHtml(file.name || '');
 				attachmentsHTML += `
-                        <a href="${file.public_url}" class="attachment-link" download="${file.name}" data-filename="${file.name}">
-                            <div class="file-info">
-                                <span class="file-name">${file.name}</span>
-                                <span class="file-size">${formatBytes(file.size)}</span>
-                            </div>
-                        </a>
-                    `;
+	                        <a href="${file.public_url}" class="attachment-link" download="${safeName}" data-filename="${safeName}">
+	                            <div class="file-info">
+	                                <span class="file-name">${safeName}</span>
+	                                <span class="file-size">${formatBytes(file.size)}</span>
+	                            </div>
+	                        </a>
+	                    `;
 			}
 		});
 		attachmentsHTML += '</div>';
@@ -303,7 +333,7 @@ function renderNote(note) {
 		<div class='note-header'>
 			<div class='note-meta'><span title='${new Date(note.updated_at).toISOString()}'>${time}</span></div>
 		</div>
-		<div class='note-content'>${marked.parse(note.content)}</div>
+		<div class='note-content'>${marked.parse(note.content || '')}</div>
             ${attachmentsHTML}
 	`;
 	return noteElement;

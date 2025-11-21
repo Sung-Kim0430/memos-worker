@@ -1,4 +1,4 @@
-import { MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
 import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
@@ -35,6 +35,10 @@ function safeParseJsonArray(value) {
 		try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch (e) { return []; }
 	}
 	return [];
+}
+function isAllowedUploadType(file) {
+	if (!file?.type) return false;
+	return ALLOWED_UPLOAD_MIME_TYPES.includes(file.type);
 }
 export async function handleNotesList(request, env, session) {
 	const authError = requireSession(session);
@@ -178,14 +182,17 @@ export async function handleNotesList(request, env, session) {
 						throw new Error("Failed to create note and get ID.");
 					}
 				// --- 【重要逻辑调整】现在上传的文件，只有非图片类型才算作 "附件" (files) ---
-				for (const file of files) {
-					if (file.size > MAX_UPLOAD_BYTES) {
-						return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
-					}
-					// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
-					if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
-						const fileId = crypto.randomUUID();
-						const objectKey = `${noteId}/${fileId}`;
+					for (const file of files) {
+						if (file.size > MAX_UPLOAD_BYTES) {
+							return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
+						}
+						if (!isAllowedUploadType(file)) {
+							return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
+						}
+						// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
+						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
+							const fileId = crypto.randomUUID();
+							const objectKey = `${noteId}/${fileId}`;
 						await env.NOTES_R2_BUCKET.put(objectKey, file.stream());
 						uploadedKeys.push(objectKey);
 						filesMeta.push({ id: fileId, name: file.name, size: file.size, type: file.type });
@@ -366,6 +373,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					for (const file of newFiles) {
 						// 只有当文件存在，并且不是图片时，才作为附件处理
 						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
+							if (!isAllowedUploadType(file)) {
+								return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
+							}
 							if (file.size > MAX_UPLOAD_BYTES) {
 								return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 							}

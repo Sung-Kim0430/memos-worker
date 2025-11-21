@@ -1,6 +1,11 @@
-import { ATTACHMENTS_PER_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, ATTACHMENTS_PER_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
+
+function isAllowedType(file) {
+	if (!file?.type) return false;
+	return ALLOWED_UPLOAD_MIME_TYPES.includes(file.type);
+}
 
 export async function handleStandaloneImageUpload(request, env, session) {
 	const authError = requireSession(session);
@@ -16,6 +21,9 @@ export async function handleStandaloneImageUpload(request, env, session) {
 		}
 		if (file.size > MAX_UPLOAD_BYTES) {
 			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
+		}
+		if (!isAllowedType(file)) {
+			return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
 		}
 
 		const imageId = crypto.randomUUID();
@@ -53,6 +61,9 @@ export async function handleImgurProxyUpload(request, env) {
 		}
 		if (imageFile.size > MAX_UPLOAD_BYTES) {
 			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
+		}
+		if (!isAllowedType(imageFile)) {
+			return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
 		}
 		const imgurFormData = new FormData();
 		imgurFormData.append('image', imageFile);

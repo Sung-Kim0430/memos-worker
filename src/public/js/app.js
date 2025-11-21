@@ -247,6 +247,13 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	document.documentElement.lang = i18n.locale;
 	window.addEventListener('DOMContentLoaded', applyTranslations);
 	// --- 配置 marked.js ---
+	const escapeHtml = (str = '') => str
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+
 	const renderer = new marked.Renderer();
 	const originalTableRenderer = renderer.table.bind(renderer);
 	const originalLinkRenderer = renderer.link.bind(renderer);
@@ -265,15 +272,11 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		}
 		const languageName = result.language || 'plaintext';
 		const highlightedCode = result.value;
-		const escapeHtml = (str) => {
-			return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-		};
-
 		const copyButtonHtml = `
-							<button class='copy-code-btn' data-code='${escapeHtml(code)}' title='${t('copyCode')}'>
-									<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg>
-							</button>
-					`;
+								<button class='copy-code-btn' data-code='${escapeHtml(code)}' title='${t('copyCode')}'>
+										<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'></rect><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'></path></svg>
+								</button>
+						`;
 
 		const finalHtml = `
 							<div class='code-block-wrapper'>
@@ -285,6 +288,9 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	};
 	renderer.link = function (token) {
 		const { href, title, text } = token;
+		if (href && href.trim().toLowerCase().startsWith('javascript:')) {
+			return escapeHtml(text || '');
+		}
 		let linkHtml = originalLinkRenderer.call(this, token);
 
 		if (linkHtml.startsWith('<a ')) {
@@ -294,6 +300,9 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	};
 	const originalImageRenderer = renderer.image.bind(renderer);
 	renderer.image = function (href, title, text) {
+		if (href && href.trim().toLowerCase().startsWith('javascript:')) {
+			return '';
+		}
 		let imageHtml = originalImageRenderer(href, title, text);
 		imageHtml = imageHtml.replace(
 			'<img ',
@@ -301,6 +310,9 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		);
 
 		return imageHtml;
+	};
+	renderer.html = function (html) {
+		return escapeHtml(html);
 	};
 	marked.setOptions({
 		renderer: renderer,
