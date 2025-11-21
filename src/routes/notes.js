@@ -1,5 +1,5 @@
 import { ALLOWED_UPLOAD_MIME_TYPES, MAX_FILENAME_LENGTH, MAX_NOTE_CONTENT_LENGTH, MAX_OFFSET, MAX_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
-import { extractImageUrls, extractVideoUrls, sanitizeContent } from '../utils/content.js';
+import { detectMimeType, extractImageUrls, extractVideoUrls, sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
@@ -56,9 +56,24 @@ function safeParseJsonArray(value) {
 	}
 	return [];
 }
-function isAllowedUploadType(file) {
-	if (!file?.type) return false;
-	return ALLOWED_UPLOAD_MIME_TYPES.includes(file.type);
+function isAllowedUploadMime(mime) {
+	if (!mime) return false;
+	return ALLOWED_UPLOAD_MIME_TYPES.includes(mime);
+}
+
+async function readAndValidateFile(file) {
+	const buffer = await file.arrayBuffer();
+	const detected = detectMimeType(buffer);
+	const declared = file.type;
+	const mime = detected || declared;
+	if (!isAllowedUploadMime(mime)) {
+		return { ok: false, reason: 'UNSUPPORTED_TYPE' };
+	}
+	// 如果嗅探出了与声明不一致的类型，则拒绝
+	if (detected && declared && detected !== declared) {
+		return { ok: false, reason: 'MIME_MISMATCH', mime: detected };
+	}
+	return { ok: true, buffer, mime };
 }
 export async function handleNotesList(request, env, session) {
 	const authError = requireSession(session);
@@ -220,17 +235,19 @@ export async function handleNotesList(request, env, session) {
 						if (file.size > MAX_UPLOAD_BYTES) {
 							return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 						}
-						if (!isAllowedUploadType(file)) {
-							return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
+						const validation = await readAndValidateFile(file);
+						if (!validation.ok) {
+							return errorResponse(validation.reason, 'Unsupported file type.', 415);
 						}
+						const mime = validation.mime || file.type;
 						// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
-						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
+						if (file.name && file.size > 0 && !mime.startsWith('image/')) {
 							const fileId = crypto.randomUUID();
 							const objectKey = `${noteId}/${fileId}`;
-						await env.NOTES_R2_BUCKET.put(objectKey, file.stream());
+						await env.NOTES_R2_BUCKET.put(objectKey, validation.buffer, { httpMetadata: { contentType: mime } });
 						uploadedKeys.push(objectKey);
 						const safeName = normalizeFileName(file.name);
-						filesMeta.push({ id: fileId, name: safeName, size: file.size, type: file.type });
+						filesMeta.push({ id: fileId, name: safeName, size: file.size, type: mime });
 					}
 				}
 
@@ -417,18 +434,20 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					for (const file of newFiles) {
 						// 只有当文件存在，并且不是图片时，才作为附件处理
 						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
-							if (!isAllowedUploadType(file)) {
-								return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
-							}
 							if (file.size > MAX_UPLOAD_BYTES) {
 								return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 							}
+							const validation = await readAndValidateFile(file);
+							if (!validation.ok) {
+								return errorResponse(validation.reason, 'Unsupported file type.', 415);
+							}
+							const mime = validation.mime || file.type;
 							const fileId = crypto.randomUUID();
 							const objectKey = `${id}/${fileId}`;
-							await bucket.put(objectKey, file.stream());
+							await bucket.put(objectKey, validation.buffer, { httpMetadata: { contentType: mime } });
 							newUploads.push(objectKey);
 							const safeName = normalizeFileName(file.name);
-							currentFiles.push({ id: fileId, name: safeName, size: file.size, type: file.type });
+							currentFiles.push({ id: fileId, name: safeName, size: file.size, type: mime });
 						}
 						}
 

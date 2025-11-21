@@ -1,10 +1,25 @@
 import { ALLOWED_UPLOAD_MIME_TYPES, ATTACHMENTS_PER_PAGE, MAX_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
+import { detectMimeType } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
 
 function isAllowedType(file) {
 	if (!file?.type) return false;
 	return ALLOWED_UPLOAD_MIME_TYPES.includes(file.type);
+}
+
+async function readAndValidateFile(file) {
+	const buffer = await file.arrayBuffer();
+	const detected = detectMimeType(buffer);
+	const declared = file.type;
+	const mime = detected || declared;
+	if (!mime || !ALLOWED_UPLOAD_MIME_TYPES.includes(mime)) {
+		return { ok: false, reason: 'UNSUPPORTED_TYPE' };
+	}
+	if (detected && declared && detected !== declared) {
+		return { ok: false, reason: 'MIME_MISMATCH', mime: detected };
+	}
+	return { ok: true, buffer, mime };
 }
 
 export async function handleStandaloneImageUpload(request, env, session) {
@@ -22,8 +37,9 @@ export async function handleStandaloneImageUpload(request, env, session) {
 		if (file.size > MAX_UPLOAD_BYTES) {
 			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 		}
-		if (!isAllowedType(file)) {
-			return errorResponse('UNSUPPORTED_TYPE', 'Unsupported file type.', 415);
+		const validation = await readAndValidateFile(file);
+		if (!validation.ok) {
+			return errorResponse(validation.reason, 'Unsupported file type.', 415);
 		}
 
 		const imageId = crypto.randomUUID();
@@ -31,8 +47,8 @@ export async function handleStandaloneImageUpload(request, env, session) {
 		const r2Key = `uploads/${imageId}`;
 
 		// 将文件流上传到 R2
-		await env.NOTES_R2_BUCKET.put(r2Key, file.stream(), {
-			httpMetadata: { contentType: file.type },
+		await env.NOTES_R2_BUCKET.put(r2Key, validation.buffer, {
+			httpMetadata: { contentType: validation.mime || file.type },
 		});
 
 		// 返回一个可用于访问此图片的内部 URL
