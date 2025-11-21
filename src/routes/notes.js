@@ -1,4 +1,4 @@
-import { ALLOWED_UPLOAD_MIME_TYPES, MAX_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, MAX_FILENAME_LENGTH, MAX_NOTE_CONTENT_LENGTH, MAX_OFFSET, MAX_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
 import { extractImageUrls, extractVideoUrls, sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
@@ -34,6 +34,11 @@ function parseNoteIdStrict(noteId) {
 	if (!Number.isInteger(num) || num <= 0) return null;
 	if (String(num) !== String(noteId).trim()) return null;
 	return num;
+}
+
+function normalizeFileName(name) {
+	const safe = (name || '').toString();
+	return safe.length > MAX_FILENAME_LENGTH ? safe.slice(0, MAX_FILENAME_LENGTH) : safe;
 }
 
 function attachSafeContent(target) {
@@ -76,6 +81,9 @@ export async function handleNotesList(request, env, session) {
 					}
 					const offset = (page - 1) * NOTES_PER_PAGE;
 					const limit = NOTES_PER_PAGE;
+					if (offset > MAX_OFFSET) {
+						return errorResponse('INVALID_PAGE', 'Page out of range', 400);
+					}
 
 				const startTimestamp = url.searchParams.get('startTimestamp');
 				const endTimestamp = url.searchParams.get('endTimestamp');
@@ -172,6 +180,9 @@ export async function handleNotesList(request, env, session) {
 					if (!content.trim() && files.every(f => !f.name)) {
 						return errorResponse('INVALID_INPUT', 'Content or file is required.', 400);
 					}
+					if (content.length > MAX_NOTE_CONTENT_LENGTH) {
+						return errorResponse('CONTENT_TOO_LONG', 'Content is too long.', 413);
+					}
 
 				const now = Date.now();
 				const filesMeta = [];
@@ -217,7 +228,8 @@ export async function handleNotesList(request, env, session) {
 							const objectKey = `${noteId}/${fileId}`;
 						await env.NOTES_R2_BUCKET.put(objectKey, file.stream());
 						uploadedKeys.push(objectKey);
-						filesMeta.push({ id: fileId, name: file.name, size: file.size, type: file.type });
+						const safeName = normalizeFileName(file.name);
+						filesMeta.push({ id: fileId, name: safeName, size: file.size, type: file.type });
 					}
 				}
 
@@ -322,6 +334,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 					if (formData.has('content')) {
 						const content = formData.get('content')?.toString() ?? existingNote.content;
+						if (content.length > MAX_NOTE_CONTENT_LENGTH) {
+							return errorResponse('CONTENT_TOO_LONG', 'Content is too long.', 413);
+						}
 						let currentFiles = Array.isArray(existingNote.files) ? [...existingNote.files] : [];
 
 						// --- 现在的文件处理只关心非图片附件 ---
@@ -411,7 +426,8 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							const objectKey = `${id}/${fileId}`;
 							await bucket.put(objectKey, file.stream());
 							newUploads.push(objectKey);
-							currentFiles.push({ id: fileId, name: file.name, size: file.size, type: file.type });
+							const safeName = normalizeFileName(file.name);
+							currentFiles.push({ id: fileId, name: safeName, size: file.size, type: file.type });
 						}
 						}
 
@@ -540,7 +556,11 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				}
 
 				if (allR2KeysToDelete.length > 0) {
-					await env.NOTES_R2_BUCKET.delete(allR2KeysToDelete);
+					try {
+						await env.NOTES_R2_BUCKET.delete(allR2KeysToDelete);
+					} catch (err) {
+						console.error("Failed to delete R2 objects for note:", id, err);
+					}
 				} else {
 					// 防止元数据解析失败导致附件遗留，尽力清理该笔记下的全部对象
 					try {
@@ -726,6 +746,9 @@ export async function handleMergeNotes(request, env, session) {
 		const mergedVideos = Array.from(new Set([...targetVideos, ...rewrittenVideos]));
 
 		// 合并后内容实际被修改，应以当前时间更新更新时间
+		if (mergedContent.length > MAX_NOTE_CONTENT_LENGTH) {
+			return errorResponse('CONTENT_TOO_LONG', 'Merged content is too long.', 413);
+		}
 		const mergedTimestamp = Date.now();
 
 		// --- 数据库与 R2 操作 ---

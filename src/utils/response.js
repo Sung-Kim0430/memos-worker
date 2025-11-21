@@ -9,7 +9,8 @@ export function errorResponse(code, message, status = 400, details, headers = ne
 		success: false,
 		error: { code, message },
 	};
-	if (details) {
+	const shouldExposeDetails = globalThis.__DEBUG_ERRORS__ === true;
+	if (details && shouldExposeDetails) {
 		payload.details = details;
 	}
 	return jsonResponse(payload, status, headers);

@@ -245,10 +245,8 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 			}
 
 			// 使用新 TTL 重新写入两个键
-			await Promise.all([
-				env.NOTES_KV.put(publicMemoKey, memoData, options),
-				env.NOTES_KV.put(noteShareKey, body.publicId, options)
-			]);
+			await env.NOTES_KV.put(publicMemoKey, memoData, options);
+			await env.NOTES_KV.put(noteShareKey, body.publicId, options);
 			await cleanupPublicFilesForShare(env, body.publicId);
 
 			return jsonResponse({ success: true, message: 'Expiration updated.' });
@@ -414,6 +412,8 @@ export async function handlePublicNoteRequest(publicId, env) {
 
 		// 3. 安全处理：移除敏感信息
 		delete note.id;
+		delete note.owner_id;
+		delete note.visibility;
 
 		// `pics` 和 `videos` 字段的内容已经被处理并包含在 `content` 中，
 		// 为保持 API 响应干净，我们不再需要它们。

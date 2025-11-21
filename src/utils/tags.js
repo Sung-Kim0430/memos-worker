@@ -1,3 +1,5 @@
+import { MAX_TAG_BATCH } from '../constants.js';
+
 export async function processNoteTags(db, noteId, content) {
 	// 先移除代码块（```...``` 和行内 `...`）避免误识别标签
 	const withoutCodeBlocks = content
@@ -23,15 +25,18 @@ export async function processNoteTags(db, noteId, content) {
 	});
 
 	// 5. 将从所有安全片段中找到的标签进行去重
-	const uniqueTags = [...new Set(allTags)];
+	const uniqueTags = [...new Set(allTags)].filter(tag => tag.length > 0 && tag.length <= 50);
 
 	const statements = [
 		db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId)
 	];
 
 	if (uniqueTags.length > 0) {
-		const placeholders = uniqueTags.map(() => '(?)').join(',');
-		await db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES ${placeholders}`).bind(...uniqueTags).run();
+		for (let i = 0; i < uniqueTags.length; i += MAX_TAG_BATCH) {
+			const slice = uniqueTags.slice(i, i + MAX_TAG_BATCH);
+			const placeholders = slice.map(() => '(?)').join(',');
+			await db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES ${placeholders}`).bind(...slice).run();
+		}
 
 		const selectPlaceholders = uniqueTags.map(() => '?').join(',');
 		const tagRows = await db.prepare(
@@ -40,14 +45,17 @@ export async function processNoteTags(db, noteId, content) {
 
 		const tagIds = (tagRows.results || []).map(row => row.id).filter(Boolean);
 		if (tagIds.length > 0) {
-			const values = tagIds.map(() => '(?, ?)').join(',');
-			const bindings = [];
-			tagIds.forEach(tagId => {
-				bindings.push(noteId, tagId);
-			});
-			statements.push(
-				db.prepare(`INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES ${values}`).bind(...bindings)
-			);
+			for (let i = 0; i < tagIds.length; i += MAX_TAG_BATCH) {
+				const slice = tagIds.slice(i, i + MAX_TAG_BATCH);
+				const values = slice.map(() => '(?, ?)').join(',');
+				const bindings = [];
+				slice.forEach(tagId => {
+					bindings.push(noteId, tagId);
+				});
+				statements.push(
+					db.prepare(`INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES ${values}`).bind(...bindings)
+				);
+			}
 		}
 	}
 

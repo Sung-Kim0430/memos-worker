@@ -1,4 +1,4 @@
-import { handleLogin, handleLogout, isSessionAuthenticated, handleRegister, handleUsersList, handleUserUpdate, handleUserDelete } from './routes/auth.js';
+import { handleLogin, handleLogout, isSessionAuthenticated, handleRegister, handleUsersList, handleUserUpdate, handleUserDelete, validateCsrf } from './routes/auth.js';
 import { handleDocsNodeCreate, handleDocsNodeDelete, handleDocsNodeGet, handleDocsNodeMove, handleDocsNodeRename, handleDocsNodeUpdate, handleDocsTree } from './routes/docs.js';
 import { handleFileRequest } from './routes/files.js';
 import { handleGetAllAttachments, handleImgurProxyUpload, handleServeStandaloneImage, handleStandaloneImageUpload } from './routes/media.js';
@@ -16,7 +16,7 @@ function redirectToSharePage(publicId, request) {
 	return Response.redirect(targetUrl.toString(), 302);
 }
 
-async function handlePublicRoutes(pathname, request, env) {
+async function handlePublicRoutes(pathname, request, env, ctx) {
 	const sharePageMatch = pathname.match(/^\/share\/([a-zA-Z0-9-]+)$/);
 	if (sharePageMatch) {
 		return redirectToSharePage(sharePageMatch[1], request);
@@ -39,7 +39,7 @@ async function handlePublicRoutes(pathname, request, env) {
 
 	const telegramMatch = pathname.match(/^\/api\/telegram_webhook\/([^\/]+)$/);
 	if (request.method === 'POST' && telegramMatch) {
-		return handleTelegramWebhook(request, env, telegramMatch[1]);
+		return handleTelegramWebhook(request, env, telegramMatch[1], ctx);
 	}
 
 	if (request.method === 'POST' && pathname === '/api/login') {
@@ -186,10 +186,10 @@ async function handleAuthenticatedRoutes(pathname, request, env, session) {
 	return null;
 }
 
-export async function handleApiRequest(request, env) {
+export async function handleApiRequest(request, env, ctx) {
 	const { pathname } = new URL(request.url);
 
-	const publicResponse = await handlePublicRoutes(pathname, request, env);
+	const publicResponse = await handlePublicRoutes(pathname, request, env, ctx);
 	if (publicResponse) {
 		return publicResponse;
 	}
@@ -197,6 +197,11 @@ export async function handleApiRequest(request, env) {
 	const session = await isSessionAuthenticated(request, env);
 	if (!session) {
 		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+	}
+
+	const csrfError = validateCsrf(request, session);
+	if (csrfError) {
+		return csrfError;
 	}
 
 	const authedResponse = await handleAuthenticatedRoutes(pathname, request, env, session);

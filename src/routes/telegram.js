@@ -1,6 +1,6 @@
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
 import { ensureAdminUser } from './auth.js';
-import { ALLOWED_UPLOAD_MIME_TYPES, DEFAULT_USER_SETTINGS, MAX_UPLOAD_BYTES } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, DEFAULT_USER_SETTINGS, MAX_FILENAME_LENGTH, MAX_UPLOAD_BYTES, TELEGRAM_PROXY_TTL_SECONDS } from '../constants.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
 
@@ -19,9 +19,14 @@ function isAllowedMimeType(mime) {
 	return !!mime && ALLOWED_UPLOAD_MIME_TYPES.includes(mime);
 }
 
+function normalizeFileName(name) {
+	const safe = (name || '').toString();
+	return safe.length > MAX_FILENAME_LENGTH ? safe.slice(0, MAX_FILENAME_LENGTH) : safe;
+}
+
 async function createTelegramProxyMapping(env, fileId, mediaType, mimeType = null) {
 	const proxyId = crypto.randomUUID();
-	await env.NOTES_KV.put(`${TG_PROXY_PREFIX}${proxyId}`, JSON.stringify({ fileId, mediaType, mimeType }));
+	await env.NOTES_KV.put(`${TG_PROXY_PREFIX}${proxyId}`, JSON.stringify({ fileId, mediaType, mimeType }), { expirationTtl: TELEGRAM_PROXY_TTL_SECONDS });
 	return proxyId;
 }
 
@@ -182,10 +187,7 @@ export async function handleTelegramProxy(request, env, session) {
 		}
 	}
 
-export async function handleTelegramWebhook(request, env, secret) {
-	if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
-		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-	}
+async function processTelegramUpdate(request, env) {
 	let chatId = null;
 	const botToken = env.TELEGRAM_BOT_TOKEN;
 	const bucket = env.NOTES_R2_BUCKET;
@@ -382,7 +384,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 						type: 'telegram_document', // 特殊类型标记
 						file_id: proxyId,
 						mime_type: document.mime_type || 'application/octet-stream',
-						name: document.file_name,
+						name: normalizeFileName(document.file_name),
 						size: document.file_size
 					});
 				// 可以在正文加一个占位符，但这需要前端支持渲染
@@ -406,7 +408,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 				cleanupKeys.push(r2Key);
 				filesMeta.push({
 					id: fileId,
-					name: document.file_name,
+					name: normalizeFileName(document.file_name),
 					size: document.file_size,
 					type: document.mime_type || 'application/octet-stream'
 				});
@@ -420,6 +422,9 @@ export async function handleTelegramWebhook(request, env, secret) {
 		if (contentFromTelegram.trim()) contentParts.push(contentFromTelegram.trim());
 
 		let finalContent = "#TG " + contentParts.join('\n\n');
+		if (finalContent.length > MAX_NOTE_CONTENT_LENGTH) {
+			throw new Error('Note content exceeds allowed length');
+		}
 
 		const updateStmt = db.prepare("UPDATE notes SET content = ?, files = ?, pics = ?, videos = ? WHERE id = ?");
 		await updateStmt.bind(
@@ -458,6 +463,24 @@ export async function handleTelegramWebhook(request, env, secret) {
 		}
 		return jsonResponse({ success: true });
 	}
+
+export async function handleTelegramWebhook(request, env, secret, ctx) {
+	const headerToken = request.headers.get('x-telegram-bot-api-secret-token');
+	if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
+		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+	}
+	if (headerToken && headerToken !== env.TELEGRAM_WEBHOOK_SECRET) {
+		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+	}
+	if (ctx) {
+		// 将耗时处理交给 waitUntil，快速返回 200，减少 Telegram 重试
+		const cloned = request.clone();
+		ctx.waitUntil(processTelegramUpdate(cloned, env).catch(err => console.error("Telegram webhook async error:", err)));
+		return jsonResponse({ success: true });
+	}
+	// 兼容无 ctx 场景
+	return processTelegramUpdate(request, env);
+}
 
 export async function sendTelegramMessage(chatId, text, botToken) {
 	const url = `https://api.telegram.org/bot${botToken}/sendMessage`;

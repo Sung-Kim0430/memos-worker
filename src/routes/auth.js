@@ -2,6 +2,7 @@ import {
 	LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
 	LOGIN_RATE_LIMIT_WINDOW_SECONDS,
 	PBKDF2_ITERATIONS,
+	CSRF_COOKIE,
 	SESSION_COOKIE,
 	SESSION_DURATION_SECONDS,
 } from '../constants.js';
@@ -52,6 +53,20 @@ async function getUserCount(env) {
 	return row?.count || 0;
 }
 
+function parseCookieValue(cookieHeader, name) {
+	if (!cookieHeader || !name) return '';
+	for (const segment of cookieHeader.split(';')) {
+		const trimmed = segment.trim();
+		if (!trimmed) continue;
+		const [cookieName, ...rest] = trimmed.split('=');
+		if (cookieName === name) {
+			const value = rest.join('=').trim();
+			return value.replace(/^"|"$/g, '');
+		}
+	}
+	return '';
+}
+
 async function ensureAdminUser(env) {
 	if (!env.USERNAME || !env.PASSWORD) {
 		// 不再强制抛错：如果已有管理员用户则沿用，否则返回 null 让调用方决定提示
@@ -95,22 +110,17 @@ function isSecureRequest(request) {
 }
 
 function parseSessionIdFromCookie(cookieHeader) {
-	if (!cookieHeader) return '';
-	for (const segment of cookieHeader.split(';')) {
-		const trimmed = segment.trim();
-		if (!trimmed) continue;
-		const [name, ...rest] = trimmed.split('=');
-		if (name === SESSION_COOKIE) {
-			const value = rest.join('=').trim();
-			return value.replace(/^"|"$/g, '');
-		}
-	}
-	return '';
+	return parseCookieValue(cookieHeader, SESSION_COOKIE);
 }
 
-async function checkLoginRateLimit(env, request) {
+function buildLoginRateLimitKey(request, username = '') {
 	const ip = getClientIp(request) || 'unknown';
-	const key = `login_attempts:${ip}`;
+	const uname = (username || '').toString().toLowerCase() || 'anonymous';
+	return `login_attempts:${ip}:${uname}`;
+}
+
+async function checkLoginRateLimit(env, request, username = '') {
+	const key = buildLoginRateLimitKey(request, username);
 	const record = await env.NOTES_KV.get(key, 'json');
 	if (record && record.count >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
 		return { limited: true, remaining: 0 };
@@ -118,9 +128,8 @@ async function checkLoginRateLimit(env, request) {
 	return { limited: false, remaining: LOGIN_RATE_LIMIT_MAX_ATTEMPTS - (record?.count || 0) };
 }
 
-async function recordLoginFailure(env, request) {
-	const ip = getClientIp(request) || 'unknown';
-	const key = `login_attempts:${ip}`;
+async function recordLoginFailure(env, request, username = '') {
+	const key = buildLoginRateLimitKey(request, username);
 	const now = Math.floor(Date.now() / 1000);
 	const record = await env.NOTES_KV.get(key, 'json');
 	const next = {
@@ -130,10 +139,37 @@ async function recordLoginFailure(env, request) {
 	await env.NOTES_KV.put(key, JSON.stringify(next), { expirationTtl: LOGIN_RATE_LIMIT_WINDOW_SECONDS });
 }
 
-async function clearLoginFailures(env, request) {
-	const ip = getClientIp(request) || 'unknown';
-	const key = `login_attempts:${ip}`;
+async function clearLoginFailures(env, request, username = '') {
+	const key = buildLoginRateLimitKey(request, username);
 	await env.NOTES_KV.delete(key);
+}
+
+function buildSetCookie(name, value, request, { maxAge = SESSION_DURATION_SECONDS, httpOnly = false } = {}) {
+	const secureFlag = isSecureRequest(request) ? '; Secure' : '';
+	const httpOnlyFlag = httpOnly ? '; HttpOnly' : '';
+	const sameSite = '; SameSite=Strict';
+	return `${name}=${value}; Path=/; Max-Age=${maxAge}${secureFlag}${httpOnlyFlag}${sameSite}`;
+}
+
+function buildSessionHeaders(request, sessionId, csrfToken) {
+	const headers = new Headers();
+	headers.append('Set-Cookie', buildSetCookie(SESSION_COOKIE, sessionId, request, { httpOnly: true }));
+	headers.append('Set-Cookie', buildSetCookie(CSRF_COOKIE, csrfToken, request, { httpOnly: false }));
+	return headers;
+}
+
+export function validateCsrf(request, session) {
+	const method = request.method.toUpperCase();
+	if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+		return null;
+	}
+	const cookieHeader = request.headers.get('Cookie');
+	const cookieToken = parseCookieValue(cookieHeader, CSRF_COOKIE);
+	const headerToken = request.headers.get('x-csrf-token');
+	if (!session?.csrfToken || !cookieToken || !headerToken || headerToken !== cookieToken || headerToken !== session.csrfToken) {
+		return errorResponse('CSRF_FAILED', 'Invalid CSRF token', 403);
+	}
+	return null;
 }
 
 export async function isSessionAuthenticated(request, env) {
@@ -149,20 +185,29 @@ export async function isSessionAuthenticated(request, env) {
 		await env.NOTES_KV.delete(`session:${sessionId}`);
 		return null;
 	}
+	const revokedAt = await env.NOTES_KV.get(`session_revoked:${user.id}`);
+	const loggedInAt = Number(session.loggedInAt) || 0;
+	if (revokedAt && loggedInAt && loggedInAt < Number(revokedAt)) {
+		await env.NOTES_KV.delete(`session:${sessionId}`);
+		return null;
+	}
+	// 滑动过期：只要请求通过校验，就刷新 Session TTL
+	try {
+		await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(session), { expirationTtl: SESSION_DURATION_SECONDS });
+	} catch (e) {
+		console.error("Failed to extend session TTL:", e);
+	}
 	return {
 		id: user.id,
 		username: user.username,
 		isAdmin: !!user.is_admin,
+		csrfToken: session.csrfToken || '',
 	};
 }
 
 export async function handleLogin(request, env) {
 	try {
 		await ensureAdminUser(env);
-		const rate = await checkLoginRateLimit(env, request);
-		if (rate.limited) {
-			return errorResponse('RATE_LIMITED', 'Too many login attempts. Please try again later.', 429, { remaining: rate.remaining });
-		}
 		let body;
 		try {
 			body = await request.json();
@@ -173,20 +218,23 @@ export async function handleLogin(request, env) {
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return errorResponse('INVALID_CREDENTIALS', 'Invalid credentials', 401);
 		}
+		const rate = await checkLoginRateLimit(env, request, username);
+		if (rate.limited) {
+			return errorResponse('RATE_LIMITED', 'Too many login attempts. Please try again later.', 429, { remaining: rate.remaining });
+		}
 		const user = await getUserByUsername(env, username);
 		if (user && await verifyPassword(password, user)) {
 			const sessionId = crypto.randomUUID();
-			const sessionData = { userId: user.id, username: user.username, isAdmin: !!user.is_admin, loggedInAt: Date.now() };
+			const csrfToken = crypto.randomUUID();
+			const sessionData = { userId: user.id, username: user.username, isAdmin: !!user.is_admin, loggedInAt: Date.now(), csrfToken };
 			await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {
 				expirationTtl: SESSION_DURATION_SECONDS,
 			});
-			await clearLoginFailures(env, request);
-			const headers = new Headers();
-			const secureFlag = isSecureRequest(request) ? '; Secure' : '';
-			headers.append('Set-Cookie', `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=${SESSION_DURATION_SECONDS}`);
+			await clearLoginFailures(env, request, username);
+			const headers = buildSessionHeaders(request, sessionId, csrfToken);
 			return jsonResponse({ success: true, user: { id: user.id, username: user.username, isAdmin: !!user.is_admin } }, 200, headers);
 		}
-		await recordLoginFailure(env, request);
+		await recordLoginFailure(env, request, username);
 	} catch (e) {
 		console.error("Login Error:", e);
 		return errorResponse('LOGIN_ERROR', 'Server error during login', 500, e.message);
@@ -209,19 +257,31 @@ export async function handleRegister(request, env, session) {
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
 			return errorResponse('INVALID_INPUT', 'Username and password are required.', 400);
 		}
-		const totalUsers = await getUserCount(env);
+		const db = env.DB;
+		await db.prepare("BEGIN IMMEDIATE").run();
+		let totalUsers = 0;
+		try {
+			const row = await db.prepare("SELECT COUNT(*) as count FROM users").first();
+			totalUsers = row?.count || 0;
 
-		// 首次创建管理员需要提供预共享口令，避免被抢注
-		if (totalUsers === 0) {
-			const bootstrapToken = request.headers.get('x-admin-bootstrap-token') || body.bootstrapToken;
-			if (!env.ADMIN_BOOTSTRAP_TOKEN || bootstrapToken !== env.ADMIN_BOOTSTRAP_TOKEN) {
-				return errorResponse('BOOTSTRAP_FORBIDDEN', 'Admin bootstrap token is required.', 403);
+			// 首次创建管理员需要提供预共享口令，避免被抢注
+			if (totalUsers === 0) {
+				const bootstrapToken = request.headers.get('x-admin-bootstrap-token') || body.bootstrapToken;
+				if (!env.ADMIN_BOOTSTRAP_TOKEN || bootstrapToken !== env.ADMIN_BOOTSTRAP_TOKEN) {
+					await db.prepare("ROLLBACK").run();
+					return errorResponse('BOOTSTRAP_FORBIDDEN', 'Admin bootstrap token is required.', 403);
+				}
+			} else if (!session || !session.isAdmin) {
+				await db.prepare("ROLLBACK").run();
+				return errorResponse('FORBIDDEN', 'Only admin can create new users.', 403);
 			}
-		} else if (!session || !session.isAdmin) {
-			return errorResponse('FORBIDDEN', 'Only admin can create new users.', 403);
-		}
-		if (await getUserByUsername(env, username)) {
-			return errorResponse('USERNAME_EXISTS', 'Username already exists.', 400);
+			if (await getUserByUsername(env, username)) {
+				await db.prepare("ROLLBACK").run();
+				return errorResponse('USERNAME_EXISTS', 'Username already exists.', 400);
+			}
+		} catch (txErr) {
+			try { await db.prepare("ROLLBACK").run(); } catch (_) { /* ignore */ }
+			throw txErr;
 		}
 
 		const tgId = telegram_user_id ? telegram_user_id.toString() : null;
@@ -249,8 +309,10 @@ export async function handleRegister(request, env, session) {
 			tgId,
 			now
 		).run();
+		await db.prepare("COMMIT").run();
 		return jsonResponse({ success: true, userId });
 	} catch (e) {
+		try { await env.DB.prepare("ROLLBACK").run(); } catch (_) { /* ignore */ }
 		console.error("Register Error:", e);
 		return errorResponse('REGISTER_FAILED', 'Failed to register user', 500, e.message);
 	}
@@ -361,7 +423,13 @@ export async function handleUserDelete(env, targetUserId, session) {
 			return errorResponse('LAST_ADMIN', 'Cannot delete the last admin.', 400);
 		}
 	}
-	const admin = await ensureAdminUser(env);
+	let admin = await env.DB.prepare("SELECT * FROM users WHERE is_admin = 1 AND id != ? LIMIT 1").bind(targetUserId).first();
+	if (!admin) {
+		admin = await ensureAdminUser(env);
+		if (admin?.id === targetUserId) {
+			admin = null;
+		}
+	}
 	if (!admin) {
 		return errorResponse('ADMIN_MISSING', 'Admin account missing, cannot transfer notes.', 500);
 	}
@@ -377,6 +445,8 @@ export async function handleUserDelete(env, targetUserId, session) {
 		console.error("Delete User Tx Error:", e);
 		return errorResponse('DELETE_USER_FAILED', 'Failed to delete user', 500, e.message);
 	}
+	// 标记该用户的所有 Session 需强制失效，避免并发创建的会话漏删
+	await env.NOTES_KV.put(`session_revoked:${targetUserId}`, Date.now().toString(), { expirationTtl: SESSION_DURATION_SECONDS });
 	// 清理该用户相关的会话
 	let cursor = undefined;
 	let complete = false;
@@ -401,8 +471,8 @@ export async function handleLogout(request, env) {
 		await env.NOTES_KV.delete(`session:${sessionId}`);
 	}
 	const headers = new Headers();
-	const secureFlag = isSecureRequest(request) ? '; Secure' : '';
-	headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly${secureFlag}; SameSite=Strict; Max-Age=0`);
+	headers.append('Set-Cookie', buildSetCookie(SESSION_COOKIE, '', request, { maxAge: 0, httpOnly: true }));
+	headers.append('Set-Cookie', buildSetCookie(CSRF_COOKIE, '', request, { maxAge: 0, httpOnly: false }));
 	return jsonResponse({ success: true }, 200, headers);
 }
 
