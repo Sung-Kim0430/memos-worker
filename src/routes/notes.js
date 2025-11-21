@@ -1,6 +1,7 @@
-import { NOTES_PER_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES } from '../constants.js';
+import { MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
 import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
-import { jsonResponse } from '../utils/response.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
 import { processNoteTags } from '../utils/tags.js';
 
 function escapeRegex(str) {
@@ -12,27 +13,6 @@ function replaceMarkdownUrl(content, oldUrl, newUrl) {
 	const escaped = escapeRegex(oldUrl);
 	const pattern = new RegExp(`(!?\\[[^\\]]*\\]\\(|\\()${escaped}(\\))`, 'g');
 	return content.replace(pattern, (_, prefix, suffix) => `${prefix}${newUrl}${suffix}`);
-}
-
-function canAccessNoteRecord(note, session) {
-	if (!note) return false;
-	if (session?.isAdmin) return true;
-	if (note.owner_id && session?.id === note.owner_id) return true;
-	if (note.visibility === 'users' && session) return true;
-	if (note.visibility === 'public') return true;
-	return false;
-}
-
-function appendAccessConditions(whereClauses, bindings, session) {
-	if (session?.isAdmin) {
-		return;
-	}
-	whereClauses.push("(n.owner_id = ? OR n.visibility IN ('users','public'))");
-	bindings.push(session?.id || '');
-}
-
-function canModifyNote(note, session) {
-	return !!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id));
 }
 
 function parsePositiveInt(value, fallback = 1) {
@@ -57,8 +37,9 @@ function safeParseJsonArray(value) {
 	return [];
 }
 export async function handleNotesList(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 
@@ -69,7 +50,7 @@ export async function handleNotesList(request, env, session) {
 				const pageParam = url.searchParams.get('page') || '1';
 				const page = parsePositiveInt(pageParam);
 				if (!page) {
-					return jsonResponse({ error: 'Invalid page parameter' }, 400);
+					return errorResponse('INVALID_PAGE', 'Invalid page parameter', 400);
 				}
 				const offset = (page - 1) * NOTES_PER_PAGE;
 				const limit = NOTES_PER_PAGE;
@@ -84,7 +65,11 @@ export async function handleNotesList(request, env, session) {
 				let bindings = [];
 				let joinClause = "";
 
-				appendAccessConditions(whereClauses, bindings, session);
+				const access = buildAccessCondition(session, 'n');
+				if (access.clause !== '1=1') {
+					whereClauses.push(access.clause);
+					bindings.push(...access.bindings);
+				}
 
 				if (isArchivedMode) {
 					whereClauses.push("n.is_archived = 1");
@@ -107,7 +92,7 @@ export async function handleNotesList(request, env, session) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");
 						bindings.push(startMs, endMs);
 					} else {
-						return jsonResponse({ error: 'Invalid time range' }, 400);
+						return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 					}
 				}
 				if (tagName) {
@@ -159,7 +144,7 @@ export async function handleNotesList(request, env, session) {
 					const requestedVisibility = formData.get('visibility');
 
 					if (!content.trim() && files.every(f => !f.name)) {
-						return jsonResponse({ error: 'Content or file is required.' }, 400);
+						return errorResponse('INVALID_INPUT', 'Content or file is required.', 400);
 					}
 
 				const now = Date.now();
@@ -176,8 +161,7 @@ export async function handleNotesList(request, env, session) {
 					// 先用一个空的 files 数组插入
 					// 【核心修改】将提取出的 picUrls 绑定到 SQL 语句中
 					const ownerId = session?.id || null;
-					const allowedVisibility = ['private', 'users', 'public'];
-					const visibility = allowedVisibility.includes(requestedVisibility) ? requestedVisibility : 'private';
+					const visibility = VISIBILITY_OPTIONS.includes(requestedVisibility) ? requestedVisibility : 'private';
 					const insertedNote = await insertStmt.bind(
 						content,
 						"[]",
@@ -196,7 +180,7 @@ export async function handleNotesList(request, env, session) {
 				// --- 【重要逻辑调整】现在上传的文件，只有非图片类型才算作 "附件" (files) ---
 				for (const file of files) {
 					if (file.size > MAX_UPLOAD_BYTES) {
-						return jsonResponse({ error: 'File too large.' }, 413);
+						return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 					}
 					// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
 					if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
@@ -249,31 +233,32 @@ export async function handleNotesList(request, env, session) {
 		}
 	} catch (e) {
 		console.error("D1 Error:", e.message, e.cause);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
 
 export async function handleNoteDetail(request, noteId, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
-		return new Response('Invalid Note ID', { status: 400 });
+		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 
 	try {
 		// 首先获取现有笔记，用于文件删除和返回数据
 		let existingNote = await db.prepare("SELECT * FROM notes WHERE id = ?").bind(id).first();
 		if (!existingNote) {
-			return new Response('Not Found', { status: 404 });
+			return errorResponse('NOTE_NOT_FOUND', 'Not Found', 404);
 		}
 		if (!existingNote.visibility) {
 			existingNote.visibility = 'private';
 		}
-		if (!canAccessNoteRecord(existingNote, session)) {
-			return jsonResponse({ error: 'Forbidden' }, 403);
+		if (!canAccessNote(existingNote, session)) {
+			return errorResponse('FORBIDDEN', 'Forbidden', 403);
 		}
 		const canModify = canModifyNote(existingNote, session);
 		// 确保 files/pics/videos 字段是数组
@@ -294,7 +279,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 			case 'PUT': {
 				if (!canModify) {
-					return jsonResponse({ error: 'Forbidden' }, 403);
+					return errorResponse('FORBIDDEN', 'Forbidden', 403);
 				}
 				try {
 				const originalUpdatedAt = existingNote.updated_at;
@@ -315,7 +300,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						try {
 							filesToDelete = JSON.parse(formData.get('filesToDelete') || '[]');
 						} catch (e) {
-							return jsonResponse({ error: 'Invalid filesToDelete payload' }, 400);
+							return errorResponse('INVALID_INPUT', 'Invalid filesToDelete payload', 400);
 						}
 						if (filesToDelete.length > 0) {
 							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
@@ -350,7 +335,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 
 							const deleteResult = await db.prepare("DELETE FROM notes WHERE id = ? AND updated_at = ?").bind(id, originalUpdatedAt).run();
 							if (!deleteResult.meta?.changes) {
-								return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+								return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 							}
 							// 删除分享 KV 和缓存
 							const publicId = await env.NOTES_KV.get(`note_share:${id}`);
@@ -382,7 +367,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						// 只有当文件存在，并且不是图片时，才作为附件处理
 						if (file.name && file.size > 0 && !file.type.startsWith('image/')) {
 							if (file.size > MAX_UPLOAD_BYTES) {
-								return jsonResponse({ error: 'File too large.' }, 413);
+								return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 							}
 							const fileId = crypto.randomUUID();
 							const objectKey = `${id}/${fileId}`;
@@ -411,7 +396,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							if (newUploads.length > 0) {
 								try { await bucket.delete(newUploads); } catch (cleanupErr) { console.error("Cleanup new uploads failed:", cleanupErr.message); }
 							}
-							return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+							return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 						}
 						await processNoteTags(db, id, content);
 						lastKnownUpdatedAt = newTimestamp;
@@ -426,7 +411,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					const stmt = db.prepare("UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
 					const result = await stmt.bind(isPinned, nextUpdatedAt, id, lastKnownUpdatedAt).run();
 					if (!result.meta?.changes) {
-						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+						return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 					}
 					lastKnownUpdatedAt = nextUpdatedAt;
 				}
@@ -436,7 +421,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					const stmt = db.prepare("UPDATE notes SET is_favorited = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
 					const result = await stmt.bind(isFavorited, nextUpdatedAt, id, lastKnownUpdatedAt).run();
 					if (!result.meta?.changes) {
-						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+						return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 					}
 					lastKnownUpdatedAt = nextUpdatedAt;
 				}
@@ -446,18 +431,17 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					const stmt = db.prepare("UPDATE notes SET is_archived = ?, updated_at = ? WHERE id = ? AND updated_at = ?");
 					const result = await stmt.bind(isArchived, nextUpdatedAt, id, lastKnownUpdatedAt).run();
 					if (!result.meta?.changes) {
-						return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+						return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 					}
 					lastKnownUpdatedAt = nextUpdatedAt;
 				}
 				if (formData.has('visibility')) {
 					const vis = formData.get('visibility');
-					const allowed = ['private', 'users', 'public'];
-					if (allowed.includes(vis)) {
+					if (VISIBILITY_OPTIONS.includes(vis)) {
 						const nextUpdatedAt = Date.now();
 						const result = await db.prepare("UPDATE notes SET visibility = ?, updated_at = ? WHERE id = ? AND updated_at = ?").bind(vis, nextUpdatedAt, id, lastKnownUpdatedAt).run();
 						if (!result.meta?.changes) {
-							return jsonResponse({ error: 'Conflict: note was modified, please retry.' }, 409);
+							return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 						}
 						lastKnownUpdatedAt = nextUpdatedAt;
 					}
@@ -478,7 +462,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 			}
 				case 'DELETE': {
 					if (!canModify) {
-						return jsonResponse({ error: 'Forbidden' }, 403);
+						return errorResponse('FORBIDDEN', 'Forbidden', 403);
 					}
 					let allR2KeysToDelete = [];
 
@@ -555,13 +539,14 @@ export async function handleNoteDetail(request, noteId, env, session) {
 		}
 	} catch (e) {
 		console.error("D1 Error:", e.message, e.cause);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
 
 export async function handleMergeNotes(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	const bucket = env.NOTES_R2_BUCKET;
@@ -570,7 +555,7 @@ export async function handleMergeNotes(request, env, session) {
 		const { sourceNoteId, targetNoteId, addSeparator } = await request.json();
 
 		if (!sourceNoteId || !targetNoteId || sourceNoteId === targetNoteId) {
-			return jsonResponse({ error: 'Invalid source or target note ID.' }, 400);
+			return errorResponse('INVALID_INPUT', 'Invalid source or target note ID.', 400);
 		}
 
 		const [sourceNote, targetNote] = await Promise.all([
@@ -579,11 +564,11 @@ export async function handleMergeNotes(request, env, session) {
 		]);
 
 	if (!sourceNote || !targetNote) {
-		return jsonResponse({ error: 'One or both notes not found.' }, 404);
+		return errorResponse('NOTE_NOT_FOUND', 'One or both notes not found.', 404);
 	}
 
 	if (!(canModifyNote(sourceNote, session) && canModifyNote(targetNote, session))) {
-		return jsonResponse({ error: 'Forbidden' }, 403);
+		return errorResponse('FORBIDDEN', 'Forbidden', 403);
 	}
 	const sourceUpdatedAt = sourceNote.updated_at;
 	const targetUpdatedAt = targetNote.updated_at;
@@ -696,7 +681,7 @@ export async function handleMergeNotes(request, env, session) {
 			if (newObjectKeys.length > 0) {
 				try { await bucket.delete(newObjectKeys); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
 			}
-			return jsonResponse({ error: 'Conflict: target note was modified, please retry.' }, 409);
+			return errorResponse('CONFLICT', 'Conflict: target note was modified, please retry.', 409);
 		}
 
 		// 删除源笔记
@@ -706,7 +691,7 @@ export async function handleMergeNotes(request, env, session) {
 			if (newObjectKeys.length > 0) {
 				try { await bucket.delete(newObjectKeys); } catch (cleanupErr) { console.error("Cleanup copied objects failed:", cleanupErr.message); }
 			}
-			return jsonResponse({ error: 'Conflict: source note was modified, please retry.' }, 409);
+			return errorResponse('CONFLICT', 'Conflict: source note was modified, please retry.', 409);
 		}
 		await db.prepare("COMMIT").run();
 
@@ -751,6 +736,6 @@ export async function handleMergeNotes(request, env, session) {
 			console.error("Cleanup copied objects failed:", cleanupErr.message);
 		}
 		console.error("Merge Notes Error:", e.message, e.cause);
-		return jsonResponse({ error: 'Database or R2 error during merge', message: e.message }, 500);
+		return errorResponse('MERGE_FAILED', 'Database or R2 error during merge', 500, e.message);
 	}
 }

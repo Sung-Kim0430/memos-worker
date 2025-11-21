@@ -1,5 +1,8 @@
 import { processNoteTags } from '../utils/tags.js';
 import { ensureAdminUser } from './auth.js';
+import { DEFAULT_USER_SETTINGS } from '../constants.js';
+import { errorResponse } from '../utils/response.js';
+import { requireSession } from '../utils/authz.js';
 
 function parseAuthorizedIds(raw) {
 	if (!raw) return [];
@@ -112,14 +115,15 @@ export function telegramEntitiesToMarkdown(text, entities = []) {
 }
 
 export async function handleTelegramProxy(request, env, session) {
-	if (!session) {
-		return new Response('Unauthorized', { status: 401 });
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const { pathname } = new URL(request.url);
 	const match = pathname.match(/^\/api\/tg-media-proxy\/([^\/]+)$/);
 
 	if (!match || !match[1]) {
-		return new Response('Invalid file_id', { status: 400 });
+		return errorResponse('INVALID_INPUT', 'Invalid file_id', 400);
 	}
 
 	const fileId = match[1];
@@ -127,7 +131,7 @@ export async function handleTelegramProxy(request, env, session) {
 
 	if (!botToken) {
 		console.error("TELEGRAM_BOT_TOKEN secret is not set.");
-		return new Response('Bot not configured', { status: 500 });
+		return errorResponse('TELEGRAM_NOT_CONFIGURED', 'Bot not configured', 500);
 	}
 
 	try {
@@ -138,7 +142,7 @@ export async function handleTelegramProxy(request, env, session) {
 
 		if (!fileInfo.ok) {
 			console.error(`Telegram getFile API error for file_id ${fileId}:`, fileInfo.description);
-			return new Response(`Telegram API error: ${fileInfo.description}`, { status: 502 }); // 502 Bad Gateway
+			return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
 		}
 
 		// 2. 构建临时的下载链接
@@ -149,13 +153,13 @@ export async function handleTelegramProxy(request, env, session) {
 
 	} catch (e) {
 		console.error("Telegram Proxy Error:", e.message);
-		return new Response('Failed to proxy Telegram media', { status: 500 });
+		return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
 	}
 }
 
 export async function handleTelegramWebhook(request, env, secret) {
 	if (!env.TELEGRAM_WEBHOOK_SECRET || secret !== env.TELEGRAM_WEBHOOK_SECRET) {
-		return new Response('Unauthorized', { status: 401 });
+		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
 	}
 	let chatId = null;
 	const botToken = env.TELEGRAM_BOT_TOKEN;
@@ -194,7 +198,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 		const db = env.DB;
 		if (!botToken) {
 			console.error("TELEGRAM_BOT_TOKEN secret is not set.");
-			return new Response('Bot not configured', { status: 500 });
+			return errorResponse('TELEGRAM_NOT_CONFIGURED', 'Bot not configured', 500);
 		}
 
 		const text = message.text || message.caption || '';
@@ -234,8 +238,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 		if (!contentFromTelegram.trim() && !photo && !document && !video) {
 			return new Response('OK', { status: 200 });
 		}
-		const defaultSettings = { telegramProxy: false };
-		const settings = await env.NOTES_KV.get('user_settings', 'json') || defaultSettings;
+		const settings = await env.NOTES_KV.get('user_settings', 'json') || DEFAULT_USER_SETTINGS;
 
 		// 1) 创建一个空内容的 note 占位
 		const now = Date.now();

@@ -1,19 +1,21 @@
-import { jsonResponse } from '../utils/response.js';
-import { MAX_UPLOAD_BYTES } from '../constants.js';
+import { ATTACHMENTS_PER_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { requireSession } from '../utils/authz.js';
 
 export async function handleStandaloneImageUpload(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	try {
 		const formData = await request.formData();
 		const file = formData.get('file');
 
 		if (!file || !file.name || file.size === 0) {
-			return jsonResponse({ error: 'A file is required for upload.' }, 400);
+			return errorResponse('INVALID_INPUT', 'A file is required for upload.', 400);
 		}
 		if (file.size > MAX_UPLOAD_BYTES) {
-			return jsonResponse({ error: 'File too large.' }, 413);
+			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 		}
 
 		const imageId = crypto.randomUUID();
@@ -32,7 +34,7 @@ export async function handleStandaloneImageUpload(request, env, session) {
 
 	} catch (e) {
 		console.error("Standalone Image Upload Error:", e.message);
-		return jsonResponse({ error: 'Upload failed', message: e.message }, 500);
+		return errorResponse('UPLOAD_FAILED', 'Upload failed', 500, e.message);
 	}
 }
 
@@ -41,16 +43,16 @@ export async function handleImgurProxyUpload(request, env) {
 		const formData = await request.formData();
 		const clientId = env.IMGUR_CLIENT_ID;
 		if (!clientId) {
-			return jsonResponse({ error: 'Imgur Client ID is not configured on server.' }, 500);
+			return errorResponse('IMGUR_NOT_CONFIGURED', 'Imgur Client ID is not configured on server.', 500);
 		}
 
 		// Imgur 需要 'image' 字段
 		const imageFile = formData.get('file');
 		if (!imageFile || imageFile.size === 0) {
-			return jsonResponse({ error: 'A file is required for upload.' }, 400);
+			return errorResponse('INVALID_INPUT', 'A file is required for upload.', 400);
 		}
 		if (imageFile.size > MAX_UPLOAD_BYTES) {
-			return jsonResponse({ error: 'File too large.' }, 413);
+			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
 		}
 		const imgurFormData = new FormData();
 		imgurFormData.append('image', imageFile);
@@ -78,22 +80,23 @@ export async function handleImgurProxyUpload(request, env) {
 
 	} catch (e) {
 		console.error("Imgur Proxy Error:", e.message);
-		return jsonResponse({ error: 'Imgur upload failed via proxy', message: e.message }, 500);
+		return errorResponse('IMGUR_UPLOAD_FAILED', 'Imgur upload failed via proxy', 500, e.message);
 	}
 }
 
 export async function handleGetAllAttachments(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	const url = new URL(request.url);
 	const pageRaw = url.searchParams.get('page') || '1';
 	const page = Number(pageRaw);
 	if (!Number.isInteger(page) || page <= 0) {
-		return jsonResponse({ error: 'Invalid page parameter' }, 400);
+		return errorResponse('INVALID_PAGE', 'Invalid page parameter', 400);
 	}
-	const limit = 20; // 每次加载20条附件
+	const limit = ATTACHMENTS_PER_PAGE;
 	const offset = (page - 1) * limit;
 
 	try {
@@ -150,7 +153,7 @@ export async function handleGetAllAttachments(request, env, session) {
 
 	} catch (e) {
 		console.error("Get All Attachments Error:", e.message);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
 
@@ -159,7 +162,7 @@ export async function handleServeStandaloneImage(imageId, env) {
 	const object = await env.NOTES_R2_BUCKET.get(r2Key);
 
 	if (object === null) {
-		return new Response('File not found', { status: 404 });
+		return errorResponse('FILE_NOT_FOUND', 'File not found', 404);
 	}
 
 	const headers = new Headers();

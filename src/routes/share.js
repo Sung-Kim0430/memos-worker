@@ -1,4 +1,6 @@
-import { jsonResponse } from '../utils/response.js';
+import { SHARE_DEFAULT_TTL_SECONDS, SHARE_LOCK_TTL_SECONDS } from '../constants.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { canModifyNote, requireSession } from '../utils/authz.js';
 
 async function hashString(input) {
 	const data = new TextEncoder().encode(input);
@@ -52,22 +54,23 @@ function sanitizeContent(content = '') {
 }
 
 export async function handleShareFileRequest(noteId, fileId, request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
-		return new Response('Invalid Note ID', { status: 400 });
+		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 
 	try {
 		const note = await db.prepare("SELECT files, owner_id FROM notes WHERE id = ?").bind(id).first();
 		if (!note) {
-			return jsonResponse({ error: 'Note not found' }, 404);
+			return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 		}
-		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
-			return jsonResponse({ error: 'Forbidden' }, 403);
+		if (!canModifyNote(note, session)) {
+			return errorResponse('FORBIDDEN', 'Forbidden', 403);
 		}
 
 		let files = [];
@@ -79,7 +82,7 @@ export async function handleShareFileRequest(noteId, fileId, request, env, sessi
 
 		const fileIndex = files.findIndex(f => f.id === fileId);
 		if (fileIndex === -1) {
-			return jsonResponse({ error: 'File not found in this note' }, 404);
+			return errorResponse('FILE_NOT_FOUND', 'File not found in this note', 404);
 		}
 
 		const file = files[fileIndex];
@@ -106,14 +109,14 @@ export async function handleShareFileRequest(noteId, fileId, request, env, sessi
 		return jsonResponse({ url: publicUrl });
 	} catch (e) {
 		console.error(`Share File Error (noteId: ${noteId}, fileId: ${fileId}):`, e.message);
-		return jsonResponse({ error: 'Database error while generating link', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database error while generating link', 500, e.message);
 	}
 }
 
 export async function handlePublicFileRequest(publicId, request, env) {
 	const kvData = await env.NOTES_KV.get(`public_file:${publicId}`, 'json');
 	if (!kvData) {
-		return new Response('Public link not found or has expired.', { status: 404 });
+		return errorResponse('PUBLIC_LINK_NOT_FOUND', 'Public link not found or has expired.', 404);
 	}
 
 	let object;
@@ -123,7 +126,7 @@ export async function handlePublicFileRequest(publicId, request, env) {
 	if (kvData.telegramProxyId) {
 		const botToken = env.TELEGRAM_BOT_TOKEN;
 		if (!botToken) {
-			return new Response('Bot not configured', { status: 500 });
+			return errorResponse('TELEGRAM_NOT_CONFIGURED', 'Bot not configured', 500);
 		}
 		try {
 			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${kvData.telegramProxyId}`;
@@ -132,14 +135,14 @@ export async function handlePublicFileRequest(publicId, request, env) {
 
 			if (!fileInfo.ok) {
 				console.error(`Telegram getFile API error for file_id ${kvData.telegramProxyId}:`, fileInfo.description);
-				return new Response(`Telegram API error: ${fileInfo.description}`, { status: 502 });
+				return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
 			}
 
 			const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
 			return Response.redirect(temporaryDownloadUrl, 302);
 		} catch (e) {
 			console.error("Telegram Public Proxy Error:", e.message);
-			return new Response('Failed to proxy Telegram media', { status: 500 });
+			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
 		}
 	}
 
@@ -154,11 +157,11 @@ export async function handlePublicFileRequest(publicId, request, env) {
 		fileName = kvData.fileName;
 		contentType = kvData.contentType;
 	} else {
-		return new Response('Invalid public link data.', { status: 500 });
+		return errorResponse('INVALID_PUBLIC_LINK', 'Invalid public link data.', 500);
 	}
 
 	if (object === null) {
-		return new Response('File not found in storage', { status: 404 });
+		return errorResponse('FILE_NOT_FOUND', 'File not found in storage', 404);
 	}
 
 	const headers = new Headers();
@@ -180,25 +183,26 @@ export async function handlePublicFileRequest(publicId, request, env) {
 }
 
 export async function handleShareNoteRequest(noteId, request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const lockKey = `share_lock:${noteId}`;
 	let lockAcquired = false;
 	try {
 		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
 		if (!note) {
-			return jsonResponse({ error: 'Note not found' }, 404);
+			return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 		}
-		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
-			return jsonResponse({ error: 'Forbidden' }, 403);
+		if (!canModifyNote(note, session)) {
+			return errorResponse('FORBIDDEN', 'Forbidden', 403);
 		}
 		try {
-			await env.NOTES_KV.put(lockKey, '1', { expirationTtl: 30, ifNotExists: true });
+			await env.NOTES_KV.put(lockKey, '1', { expirationTtl: SHARE_LOCK_TTL_SECONDS, ifNotExists: true });
 			lockAcquired = true;
 		} catch (lockErr) {
 			if (lockErr?.message?.includes('exists')) {
-				return jsonResponse({ error: 'Share update is in progress, please retry.' }, 409);
+				return errorResponse('RESOURCE_LOCKED', 'Share update is in progress, please retry.', 409);
 			}
 			throw lockErr;
 		}
@@ -208,7 +212,7 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		try {
 			body = bodyText ? JSON.parse(bodyText) : {};
 		} catch (e) {
-			return jsonResponse({ error: 'Invalid JSON body' }, 400);
+			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
 		}
 		const noteShareKey = `note_share:${noteId}`;
 		const publicMemoKey = `public_memo:${body.publicId}`;
@@ -217,16 +221,16 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		if (body.publicId) {
 			const currentPublicId = await env.NOTES_KV.get(noteShareKey);
 			if (!currentPublicId || currentPublicId !== body.publicId) {
-				return jsonResponse({ error: 'Shared memo not found. Cannot update expiration.' }, 404);
+				return errorResponse('PUBLIC_LINK_NOT_FOUND', 'Shared memo not found. Cannot update expiration.', 404);
 			}
 			const memoData = await env.NOTES_KV.get(publicMemoKey);
 			if (!memoData) {
-				return jsonResponse({ error: 'Shared memo not found. Cannot update expiration.' }, 404);
+				return errorResponse('PUBLIC_LINK_NOT_FOUND', 'Shared memo not found. Cannot update expiration.', 404);
 			}
 
 			// 确保请求显式提供有效 TTL；否则保持原样
 			if (typeof body.expirationTtl !== 'number' || body.expirationTtl < 0) {
-				return jsonResponse({ error: 'expirationTtl is required and must be >= 0' }, 400);
+				return errorResponse('INVALID_INPUT', 'expirationTtl is required and must be >= 0', 400);
 			}
 
 			const options = {};
@@ -250,7 +254,7 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 			if (!publicId) {
 				publicId = crypto.randomUUID();
 				// 默认过期时间为 1 小时 (3600 秒)
-				const expirationTtl = (body.expirationTtl !== undefined) ? body.expirationTtl : 3600;
+				const expirationTtl = (body.expirationTtl !== undefined) ? body.expirationTtl : SHARE_DEFAULT_TTL_SECONDS;
 				const options = {};
 				if (expirationTtl > 0) {
 					options.expirationTtl = expirationTtl;
@@ -270,7 +274,7 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		}
 	} catch (e) {
 		console.error(`Share/Update Note Error (noteId: ${noteId}):`, e.message);
-		return jsonResponse({ error: 'Database or KV error during operation' }, 500);
+		return errorResponse('SHARE_FAILED', 'Database or KV error during operation', 500, e.message);
 	} finally {
 		if (lockAcquired) {
 			try { await env.NOTES_KV.delete(lockKey); } catch (cleanupErr) { console.error("Release share lock failed:", cleanupErr.message); }
@@ -279,16 +283,17 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 }
 
 export async function handleUnshareNoteRequest(noteId, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	try {
 		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
 		if (!note) {
-			return jsonResponse({ error: 'Note not found' }, 404);
+			return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 		}
-		if (!(session?.isAdmin || (note.owner_id && session?.id === note.owner_id))) {
-			return jsonResponse({ error: 'Forbidden' }, 403);
+		if (!canModifyNote(note, session)) {
+			return errorResponse('FORBIDDEN', 'Forbidden', 403);
 		}
 		const publicId = await env.NOTES_KV.get(`note_share:${noteId}`);
 		if (publicId) {
@@ -301,14 +306,14 @@ export async function handleUnshareNoteRequest(noteId, env, session) {
 		return jsonResponse({ success: true, message: 'Sharing has been revoked.' });
 	} catch (e) {
 		console.error(`Unshare Note Error (noteId: ${noteId}):`, e.message);
-		return jsonResponse({ error: 'Database error while revoking link' }, 500);
+		return errorResponse('SHARE_REVOKE_FAILED', 'Database error while revoking link', 500, e.message);
 	}
 }
 
 export async function handlePublicNoteRequest(publicId, env) {
 	const kvData = await env.NOTES_KV.get(`public_memo:${publicId}`, 'json');
 	if (!kvData || !kvData.noteId) {
-		return jsonResponse({ error: 'Shared note not found or has expired' }, 404);
+		return errorResponse('PUBLIC_LINK_NOT_FOUND', 'Shared note not found or has expired', 404);
 	}
 
 	const noteId = kvData.noteId;
@@ -316,7 +321,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 	try {
 		const note = await env.DB.prepare("SELECT id, content, updated_at, files FROM notes WHERE id = ?").bind(noteId).first();
 		if (!note) {
-			return jsonResponse({ error: 'Shared note content not found' }, 404);
+			return errorResponse('NOTE_NOT_FOUND', 'Shared note content not found', 404);
 		}
 		const shareTtlSeconds = await getShareTtlSeconds(env, publicId);
 
@@ -405,7 +410,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 
 	} catch (e) {
 		console.error(`Public Note Error (publicId: ${publicId}):`, e.message);
-		return jsonResponse({ error: 'Database Error' }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
 
@@ -413,19 +418,19 @@ export async function handlePublicRawNoteRequest(publicId, env) {
 	// 1. 从 KV 获取 noteId
 	const kvData = await env.NOTES_KV.get(`public_memo:${publicId}`, 'json');
 	if (!kvData || !kvData.noteId) {
-		return new Response('Not Found', { status: 404 });
+		return errorResponse('PUBLIC_LINK_NOT_FOUND', 'Not Found', 404);
 	}
 
 	try {
 		// 2. 使用获取到的 noteId 从 D1 查询笔记内容
 		const note = await env.DB.prepare("SELECT content FROM notes WHERE id = ?").bind(kvData.noteId).first();
 		if (!note) {
-			return new Response('Not Found', { status: 404 });
+			return errorResponse('NOTE_NOT_FOUND', 'Not Found', 404);
 		}
 		const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8' });
 		return new Response(note.content, { headers });
 	} catch (e) {
 		console.error(`Public Raw Note Error (publicId: ${publicId}):`, e.message);
-		return new Response('Server Error', { status: 500 });
+		return errorResponse('DATABASE_ERROR', 'Server Error', 500, e.message);
 	}
 }

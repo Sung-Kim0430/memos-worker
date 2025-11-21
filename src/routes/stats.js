@@ -1,11 +1,5 @@
-import { jsonResponse } from '../utils/response.js';
-
-function accessWhere(session, alias = '') {
-	const prefix = alias ? `${alias}.` : '';
-	return session?.isAdmin
-		? { clause: '1=1', binds: [] }
-		: { clause: `(${prefix}owner_id = ? OR ${prefix}visibility IN ('users','public'))`, binds: [session?.id || ''] };
-}
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { buildAccessCondition, requireSession } from '../utils/authz.js';
 
 function isValidTimezone(tz) {
 	try {
@@ -17,14 +11,15 @@ function isValidTimezone(tz) {
 }
 
 export async function handleStatsRequest(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	try {
-		const access = accessWhere(session);
+		const access = buildAccessCondition(session);
 		const memosCountQuery = db.prepare(`SELECT COUNT(*) as total FROM notes WHERE ${access.clause}`);
-		const tagAccess = accessWhere(session, 'n');
+		const tagAccess = buildAccessCondition(session, 'n');
 		const tagsCountQuery = db.prepare(`
 			SELECT COUNT(DISTINCT nt.tag_id) as total
 			FROM note_tags nt
@@ -35,9 +30,9 @@ export async function handleStatsRequest(request, env, session) {
 
 		// 使用 Promise.all 并行执行所有查询，以获得最佳性能
 		const [memosResult, tagsResult, oldestNoteResult] = await Promise.all([
-			memosCountQuery.bind(...access.binds).first(),
-			tagsCountQuery.bind(...tagAccess.binds).first(),
-			oldestNoteQuery.bind(...access.binds).first()
+			memosCountQuery.bind(...access.bindings).first(),
+			tagsCountQuery.bind(...tagAccess.bindings).first(),
+			oldestNoteQuery.bind(...access.bindings).first()
 		]);
 
 		// 组装最终的 JSON 响应
@@ -49,22 +44,23 @@ export async function handleStatsRequest(request, env, session) {
 		return jsonResponse(stats);
 	} catch (e) {
 		console.error("Stats Error:", e.message);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
 
 export async function handleTimelineRequest(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	try {
 		const { searchParams } = new URL(request.url);
 		const timezone = searchParams.get('timezone') || 'UTC';
 		if (!isValidTimezone(timezone)) {
-			return jsonResponse({ error: 'Invalid timezone' }, 400);
+			return errorResponse('INVALID_TIMEZONE', 'Invalid timezone', 400);
 		}
-		const access = accessWhere(session);
+		const access = buildAccessCondition(session);
 		const stmt = db.prepare(`
 			SELECT
 				CAST(strftime('%Y', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS year,
@@ -76,7 +72,7 @@ export async function handleTimelineRequest(request, env, session) {
 			GROUP BY year, month, day
 			ORDER BY year DESC, month DESC, day DESC
 		`);
-		const { results } = await stmt.bind(...access.binds).all();
+		const { results } = await stmt.bind(...access.bindings).all();
 		const timeline = {};
 		for (const row of results || []) {
 			const year = row.year;
@@ -98,6 +94,6 @@ export async function handleTimelineRequest(request, env, session) {
 		return jsonResponse(timeline);
 	} catch (e) {
 		console.error("Timeline Error:", e.message);
-		return jsonResponse({ error: 'Database Error', message: e.message }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }

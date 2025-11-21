@@ -8,7 +8,7 @@ import { handleGetSettings, handleSetSettings } from './routes/settings.js';
 import { handlePublicFileRequest, handlePublicNoteRequest, handlePublicRawNoteRequest, handleShareFileRequest, handleShareNoteRequest, handleUnshareNoteRequest } from './routes/share.js';
 import { handleStatsRequest, handleTimelineRequest } from './routes/stats.js';
 import { handleTelegramProxy, handleTelegramWebhook } from './routes/telegram.js';
-import { jsonResponse } from './utils/response.js';
+import { errorResponse, jsonResponse } from './utils/response.js';
 
 function redirectToSharePage(publicId, request) {
 	const targetUrl = new URL('/share.html', request.url);
@@ -196,7 +196,7 @@ export async function handleApiRequest(request, env) {
 
 	const session = await isSessionAuthenticated(request, env);
 	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
 	}
 
 	const authedResponse = await handleAuthenticatedRoutes(pathname, request, env, session);
@@ -204,5 +204,5 @@ export async function handleApiRequest(request, env) {
 		return authedResponse;
 	}
 
-	return new Response('Not Found', { status: 404 });
+	return errorResponse('NOT_FOUND', 'Not Found', 404);
 }

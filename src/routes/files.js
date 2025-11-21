@@ -1,35 +1,30 @@
-function canAccess(note, session) {
-	if (!note) return false;
-	if (session?.isAdmin) return true;
-	if (note.owner_id && session?.id === note.owner_id) return true;
-	if (note.visibility === 'users' && session) return true;
-	if (note.visibility === 'public') return true;
-	return false;
-}
+import { errorResponse } from '../utils/response.js';
+import { canAccessNote, requireSession } from '../utils/authz.js';
 
 export async function handleFileRequest(noteId, fileId, request, env, session) {
-	if (!session) {
-		return new Response('Unauthorized', { status: 401 });
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	const id = parseInt(noteId);
 	if (isNaN(id)) {
-		return new Response('Invalid Note ID', { status: 400 });
+		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 
 	// 尝试从数据库获取元数据
 	const note = await db.prepare("SELECT files, owner_id, visibility FROM notes WHERE id = ?").bind(id).first();
 
 	if (!note) {
-		return new Response('Not Found', { status: 404 });
+		return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 	}
 
 	if (!note.visibility) {
 		note.visibility = 'private';
 	}
 
-	if (!canAccess(note, session)) {
-		return new Response('Forbidden', { status: 403 });
+	if (!canAccessNote(note, session)) {
+		return errorResponse('FORBIDDEN', 'Forbidden', 403);
 	}
 
 	let files = [];
@@ -59,7 +54,7 @@ export async function handleFileRequest(noteId, fileId, request, env, session) {
 	const object = await env.NOTES_R2_BUCKET.get(`${id}/${fileId}`);
 	if (object === null) {
 		// 如果 R2 中确实没有这个文件，才返回 404
-		return new Response('File not found in storage', { status: 404 });
+		return errorResponse('FILE_NOT_FOUND', 'File not found in storage', 404);
 	}
 
 	const headers = new Headers();

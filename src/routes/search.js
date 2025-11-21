@@ -1,5 +1,6 @@
-import { NOTES_PER_PAGE, MAX_TIME_RANGE_MS } from '../constants.js';
-import { jsonResponse } from '../utils/response.js';
+import { MAX_TIME_RANGE_MS, NOTES_PER_PAGE } from '../constants.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { buildAccessCondition, requireSession } from '../utils/authz.js';
 import { handleNotesList } from './notes.js';
 
 function sanitizeFtsQuery(raw) {
@@ -9,15 +10,10 @@ function sanitizeFtsQuery(raw) {
 	return cleaned.split(/\s+/).filter(Boolean).join(' ');
 }
 
-function appendAccess(whereClauses, bindings, session) {
-	if (session?.isAdmin) return;
-	whereClauses.push("(n.owner_id = ? OR n.visibility IN ('users','public'))");
-	bindings.push(session?.id || '');
-}
-
 export async function handleSearchRequest(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const { searchParams } = new URL(request.url);
 	const query = searchParams.get('q');
@@ -40,7 +36,7 @@ export async function handleSearchRequest(request, env, session) {
 	const pageRaw = searchParams.get('page') || '1';
 	const page = Number(pageRaw);
 	if (!Number.isInteger(page) || page <= 0) {
-		return jsonResponse({ error: 'Invalid page parameter' }, 400);
+		return errorResponse('INVALID_PAGE', 'Invalid page parameter', 400);
 	}
 	const offset = (page - 1) * NOTES_PER_PAGE;
 	const limit = NOTES_PER_PAGE;
@@ -56,7 +52,11 @@ export async function handleSearchRequest(request, env, session) {
 		let bindings = [sanitized + '*'];
 		let joinClause = "";
 
-		appendAccess(whereClauses, bindings, session);
+		const access = buildAccessCondition(session, 'n');
+		if (access.clause !== '1=1') {
+			whereClauses.push(access.clause);
+			bindings.push(...access.bindings);
+		}
 
 		if (isArchivedMode) {
 			whereClauses.push("n.is_archived = 1");
@@ -79,7 +79,7 @@ export async function handleSearchRequest(request, env, session) {
 				whereClauses.push("n.updated_at >= ? AND n.updated_at < ?");
 				bindings.push(startMs, endMs);
 			} else {
-				return jsonResponse({ error: 'Invalid time range' }, 400);
+				return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 			}
 		}
 		if (tagName) {
@@ -115,23 +115,25 @@ export async function handleSearchRequest(request, env, session) {
 		return jsonResponse({ notes, hasMore });
 	} catch (e) {
 		console.error("Search Error:", e.message);
-		const message = (e.message || '').toLowerCase().includes('fts')
-			? 'Invalid search query'
-			: 'Database Error';
+		const isFtsError = (e.message || '').toLowerCase().includes('fts');
+		const message = isFtsError ? 'Invalid search query' : 'Database Error';
 		const status = message === 'Invalid search query' ? 400 : 500;
-		return jsonResponse({ error: message, message: e.message }, status);
+		const code = isFtsError ? 'INVALID_QUERY' : 'DATABASE_ERROR';
+		return errorResponse(code, message, status, e.message);
 	}
 }
 
 export async function handleTagsList(request, env, session) {
-	if (!session) {
-		return jsonResponse({ error: 'Unauthorized' }, 401);
+	const authError = requireSession(session);
+	if (authError) {
+		return authError;
 	}
 	const db = env.DB;
 	try {
 		// 使用 LEFT JOIN 和 COUNT 来统计每个标签关联的笔记数量
 		// ORDER BY count DESC, name ASC 实现了按数量降序、名称升序的排序
-		const whereClause = session?.isAdmin ? '1=1' : "(n.owner_id = ? OR n.visibility IN ('users','public'))";
+		const access = buildAccessCondition(session, 'n');
+		const whereClause = access.clause;
 		const stmt = db.prepare(`
             SELECT t.name, COUNT(nt.note_id) as count
             FROM tags t
@@ -142,10 +144,10 @@ export async function handleTagsList(request, env, session) {
             HAVING count > 0 -- 只返回被使用过的标签
             ORDER BY count DESC, t.name ASC
         `);
-		const { results } = await stmt.bind(...(session?.isAdmin ? [] : [session?.id || ''])).all();
+		const { results } = await stmt.bind(...access.bindings).all();
 		return jsonResponse(results);
 	} catch (e) {
 		console.error("Tags List Error:", e.message);
-		return jsonResponse({ error: 'Database Error' }, 500);
+		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }

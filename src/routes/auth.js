@@ -1,11 +1,14 @@
-import { SESSION_COOKIE, SESSION_DURATION_SECONDS } from '../constants.js';
-import { jsonResponse } from '../utils/response.js';
+import {
+	LOGIN_RATE_LIMIT_MAX_ATTEMPTS,
+	LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+	PBKDF2_ITERATIONS,
+	SESSION_COOKIE,
+	SESSION_DURATION_SECONDS,
+} from '../constants.js';
+import { errorResponse, jsonResponse } from '../utils/response.js';
+import { requireAdmin } from '../utils/authz.js';
 
-const PBKDF_ITERATIONS = 100000; // Workers 限制 100k 以内
-const LOGIN_RATE_LIMIT_MAX = 10; // 简单登录速率限制
-const LOGIN_RATE_LIMIT_WINDOW = 10 * 60; // 秒
-
-async function deriveKey(password, salt, iterations = PBKDF_ITERATIONS) {
+async function deriveKey(password, salt, iterations = PBKDF2_ITERATIONS) {
 	const encoder = new TextEncoder();
 	const keyMaterial = await crypto.subtle.importKey(
 		'raw',
@@ -49,7 +52,7 @@ async function getUserCount(env) {
 	return row?.count || 0;
 }
 
-	async function ensureAdminUser(env) {
+async function ensureAdminUser(env) {
 	if (!env.USERNAME || !env.PASSWORD) {
 		// 不再强制抛错：如果已有管理员用户则沿用，否则返回 null 让调用方决定提示
 		const existingAdmin = await env.DB.prepare("SELECT * FROM users WHERE is_admin = 1 LIMIT 1").first();
@@ -101,10 +104,10 @@ async function checkLoginRateLimit(env, request) {
 	const ip = getClientIp(request) || 'unknown';
 	const key = `login_attempts:${ip}`;
 	const record = await env.NOTES_KV.get(key, 'json');
-	if (record && record.count >= LOGIN_RATE_LIMIT_MAX) {
+	if (record && record.count >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
 		return { limited: true, remaining: 0 };
 	}
-	return { limited: false, remaining: LOGIN_RATE_LIMIT_MAX - (record?.count || 0) };
+	return { limited: false, remaining: LOGIN_RATE_LIMIT_MAX_ATTEMPTS - (record?.count || 0) };
 }
 
 async function recordLoginFailure(env, request) {
@@ -114,9 +117,9 @@ async function recordLoginFailure(env, request) {
 	const record = await env.NOTES_KV.get(key, 'json');
 	const next = {
 		count: (record?.count || 0) + 1,
-		expires: now + LOGIN_RATE_LIMIT_WINDOW
+		expires: now + LOGIN_RATE_LIMIT_WINDOW_SECONDS
 	};
-	await env.NOTES_KV.put(key, JSON.stringify(next), { expirationTtl: LOGIN_RATE_LIMIT_WINDOW });
+	await env.NOTES_KV.put(key, JSON.stringify(next), { expirationTtl: LOGIN_RATE_LIMIT_WINDOW_SECONDS });
 }
 
 async function clearLoginFailures(env, request) {
@@ -150,11 +153,11 @@ export async function handleLogin(request, env) {
 		await ensureAdminUser(env);
 		const rate = await checkLoginRateLimit(env, request);
 		if (rate.limited) {
-			return jsonResponse({ error: 'Too many login attempts. Please try again later.' }, 429);
+			return errorResponse('RATE_LIMITED', 'Too many login attempts. Please try again later.', 429, { remaining: rate.remaining });
 		}
 		const { username, password } = await request.json();
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
-			return jsonResponse({ error: 'Invalid credentials' }, 401);
+			return errorResponse('INVALID_CREDENTIALS', 'Invalid credentials', 401);
 		}
 		const user = await getUserByUsername(env, username);
 		if (user && await verifyPassword(password, user)) {
@@ -172,35 +175,39 @@ export async function handleLogin(request, env) {
 		await recordLoginFailure(env, request);
 	} catch (e) {
 		console.error("Login Error:", e.message);
-		return jsonResponse({ error: 'Server error during login', message: e.message }, 500);
+		return errorResponse('LOGIN_ERROR', 'Server error during login', 500, e.message);
 	}
-	return jsonResponse({ error: 'Invalid credentials' }, 401);
+	return errorResponse('INVALID_CREDENTIALS', 'Invalid credentials', 401);
 }
 
 export async function handleRegister(request, env, session) {
 	try {
 		const { username, password, isAdmin = false, telegram_user_id } = await request.json();
 		if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
-			return jsonResponse({ error: 'Username and password are required.' }, 400);
+			return errorResponse('INVALID_INPUT', 'Username and password are required.', 400);
 		}
 		const totalUsers = await getUserCount(env);
 		if (totalUsers > 0 && (!session || !session.isAdmin)) {
-			return jsonResponse({ error: 'Only admin can create new users.' }, 403);
+			return errorResponse('FORBIDDEN', 'Only admin can create new users.', 403);
 		}
-	if (await getUserByUsername(env, username)) {
-		return jsonResponse({ error: 'Username already exists.' }, 400);
-	}
-	const tgId = telegram_user_id ? telegram_user_id.toString() : null;
-	if (tgId) {
-		const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(tgId).first();
-		if (dup) {
-			return jsonResponse({ error: 'Telegram user id already bound.' }, 400);
+		if (await getUserByUsername(env, username)) {
+			return errorResponse('USERNAME_EXISTS', 'Username already exists.', 400);
 		}
-	}
-	const { hash, salt } = await hashPassword(password);
+
+		const tgId = telegram_user_id ? telegram_user_id.toString() : null;
+		if (tgId) {
+			const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(tgId).first();
+			if (dup) {
+				return errorResponse('TELEGRAM_ID_CONFLICT', 'Telegram user id already bound.', 400);
+			}
+		}
+
+		const { hash, salt } = await hashPassword(password);
 		const now = Date.now();
 		const userId = crypto.randomUUID();
 		const isFirstUser = totalUsers === 0;
+		const isAdminFlag = isFirstUser ? 1 : (isAdmin && session?.isAdmin ? 1 : 0);
+
 		await env.DB.prepare(
 			"INSERT INTO users (id, username, password_hash, salt, is_admin, telegram_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
 		).bind(
@@ -208,14 +215,14 @@ export async function handleRegister(request, env, session) {
 			username,
 			hash,
 			salt,
-			isFirstUser ? 1 : (isAdmin && session?.isAdmin ? 1 : 0),
+			isAdminFlag,
 			tgId,
 			now
 		).run();
 		return jsonResponse({ success: true, userId });
 	} catch (e) {
 		console.error("Register Error:", e.message);
-		return jsonResponse({ error: 'Failed to register user', message: e.message }, 500);
+		return errorResponse('REGISTER_FAILED', 'Failed to register user', 500, e.message);
 	}
 }
 
@@ -225,20 +232,22 @@ async function ensureAtLeastOneAdmin(env, excludeUserId = null) {
 }
 
 export async function handleUsersList(env, session) {
-	if (!session?.isAdmin) {
-		return jsonResponse({ error: 'Forbidden' }, 403);
+	const authError = requireAdmin(session);
+	if (authError) {
+		return authError;
 	}
 	const { results } = await env.DB.prepare("SELECT id, username, is_admin, telegram_user_id, created_at FROM users ORDER BY created_at ASC").all();
 	return jsonResponse({ users: results });
 }
 
 export async function handleUserUpdate(request, env, targetUserId, session) {
-	if (!session?.isAdmin) {
-		return jsonResponse({ error: 'Forbidden' }, 403);
+	const authError = requireAdmin(session);
+	if (authError) {
+		return authError;
 	}
 	const target = await getUserById(env, targetUserId);
 	if (!target) {
-		return jsonResponse({ error: 'User not found' }, 404);
+		return errorResponse('USER_NOT_FOUND', 'User not found', 404);
 	}
 	const payload = await request.json();
 	const updates = [];
@@ -247,7 +256,7 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 	if (payload.username) {
 		const exists = await env.DB.prepare("SELECT id FROM users WHERE username = ? AND id != ?").bind(payload.username, targetUserId).first();
 		if (exists) {
-			return jsonResponse({ error: 'Username already exists.' }, 400);
+			return errorResponse('USERNAME_EXISTS', 'Username already exists.', 400);
 		}
 		updates.push("username = ?");
 		bindings.push(payload.username);
@@ -257,7 +266,7 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		if (tgId) {
 			const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ? AND id != ?").bind(tgId, targetUserId).first();
 			if (dup) {
-				return jsonResponse({ error: 'Telegram user id already bound.' }, 400);
+				return errorResponse('TELEGRAM_ID_CONFLICT', 'Telegram user id already bound.', 400);
 			}
 		}
 		updates.push("telegram_user_id = ?");
@@ -268,7 +277,7 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		if (!keepAdmin) {
 			const hasOtherAdmin = await ensureAtLeastOneAdmin(env, targetUserId);
 			if (!hasOtherAdmin) {
-				return jsonResponse({ error: 'Cannot remove the last admin.' }, 400);
+				return errorResponse('LAST_ADMIN', 'Cannot remove the last admin.', 400);
 			}
 		}
 		updates.push("is_admin = ?");
@@ -282,7 +291,7 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 		bindings.push(salt);
 	}
 	if (updates.length === 0) {
-		return jsonResponse({ error: 'No fields to update.' }, 400);
+		return errorResponse('NO_UPDATES', 'No fields to update.', 400);
 	}
 	const stmt = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
 	bindings.push(targetUserId);
@@ -291,22 +300,23 @@ export async function handleUserUpdate(request, env, targetUserId, session) {
 }
 
 export async function handleUserDelete(env, targetUserId, session) {
-	if (!session?.isAdmin) {
-		return jsonResponse({ error: 'Forbidden' }, 403);
+	const authError = requireAdmin(session);
+	if (authError) {
+		return authError;
 	}
 	const target = await getUserById(env, targetUserId);
 	if (!target) {
-		return jsonResponse({ error: 'User not found' }, 404);
+		return errorResponse('USER_NOT_FOUND', 'User not found', 404);
 	}
 	if (target.is_admin) {
 		const hasOtherAdmin = await ensureAtLeastOneAdmin(env, targetUserId);
 		if (!hasOtherAdmin) {
-			return jsonResponse({ error: 'Cannot delete the last admin.' }, 400);
+			return errorResponse('LAST_ADMIN', 'Cannot delete the last admin.', 400);
 		}
 	}
 	const admin = await ensureAdminUser(env);
 	if (!admin) {
-		return jsonResponse({ error: 'Admin account missing, cannot transfer notes.' }, 500);
+		return errorResponse('ADMIN_MISSING', 'Admin account missing, cannot transfer notes.', 500);
 	}
 	// 转移笔记 + 删除用户使用事务，避免部分失败导致数据不一致
 	const db = env.DB;
@@ -318,7 +328,7 @@ export async function handleUserDelete(env, targetUserId, session) {
 	} catch (e) {
 		try { await db.prepare("ROLLBACK").run(); } catch (rollbackErr) { console.error("Rollback failed:", rollbackErr.message); }
 		console.error("Delete User Tx Error:", e.message);
-		return jsonResponse({ error: 'Failed to delete user', message: e.message }, 500);
+		return errorResponse('DELETE_USER_FAILED', 'Failed to delete user', 500, e.message);
 	}
 	// 清理该用户相关的会话
 	const list = await env.NOTES_KV.list({ prefix: 'session:' });
