@@ -6,6 +6,20 @@ const i18n = new I18n({
 	supportedLanguages: SUPPORTED_LANGUAGES,
 	storageKey: STORAGE_KEYS.language,
 });
+const APP_VERSION = window.__APP_VERSION__ || '3370803';
+const STORED_APP_VERSION = localStorage.getItem('APP_VERSION') || null;
+if (STORED_APP_VERSION && STORED_APP_VERSION !== APP_VERSION) {
+	try {
+		localStorage.clear();
+		sessionStorage.clear();
+		if ('caches' in window) {
+			caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => { /* ignore */ });
+		}
+	} catch (e) {
+		console.error('Failed to clear caches on version mismatch:', e);
+	}
+}
+localStorage.setItem('APP_VERSION', APP_VERSION);
 let languagePreference = i18n.languagePreference;
 let currentLanguage = i18n.currentLanguage;
 const languageSelect = document.getElementById('language-select');
@@ -62,11 +76,18 @@ function renderVisibilityOptions(selectEl, currentValue) {
 }
 
 	function extractErrorMessage(errorPayload, fallback = 'Request failed') {
+		const sanitize = (msg) => {
+			if (!msg) return null;
+			if (msg.length > 500) return null;
+			const lower = msg.toLowerCase();
+			if (lower.includes('<html') || lower.includes('<!doctype')) return null;
+			return msg;
+		};
 		if (!errorPayload) return fallback;
-		if (typeof errorPayload === 'string') return errorPayload;
-		if (typeof errorPayload?.error === 'string') return errorPayload.error;
-		if (errorPayload?.error?.message) return errorPayload.error.message;
-		if (errorPayload?.message) return errorPayload.message;
+		if (typeof errorPayload === 'string') return sanitize(errorPayload) || fallback;
+		if (typeof errorPayload?.error === 'string') return sanitize(errorPayload.error) || fallback;
+		if (errorPayload?.error?.message) return sanitize(errorPayload.error.message) || fallback;
+		if (errorPayload?.message) return sanitize(errorPayload.message) || fallback;
 		if (errorPayload?.error?.code) return errorPayload.error.code;
 		return fallback;
 	}
@@ -3952,7 +3973,10 @@ function renderVisibilityOptions(selectEl, currentValue) {
 				body: JSON.stringify({ username: username.value, password: password.value })
 			});
 			const data = await safeJson(res);
-			if (!res.ok) throw new Error(extractErrorMessage(data, 'Invalid username or password.'));
+			if (!res.ok) {
+				const fallback = res.status === 403 ? 'Login blocked or invalid response.' : 'Invalid username or password.';
+				throw new Error(extractErrorMessage(data, fallback));
+			}
 			currentUser.isAdmin = !!data.user?.isAdmin;
 			await loadUsersIfAdmin();
 			initializeApp();
