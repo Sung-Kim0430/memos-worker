@@ -786,6 +786,13 @@
 		box-shadow: none;
 	}
 
+	.user-admin-subtitle {
+		font-weight: 700;
+		color: var(--text-color);
+		margin: 0 0 0.25rem;
+		font-size: 0.95rem;
+	}
+
 	.setting-item.user-admin-form {
 		display: grid;
 		grid-template-columns: 1fr;
@@ -808,6 +815,10 @@
 	.setting-item.user-admin-form .user-admin-field .user-input {
 		width: 100%;
 		max-width: 100%;
+		padding: 6px 10px;
+		height: 36px;
+		border-radius: 4px;
+		background: var(--bg-color);
 	}
 
 	.user-admin-inline {
@@ -832,20 +843,20 @@
 	}
 
 	.user-admin-checkbox {
-		padding: 8px 10px;
-		border: 1px solid var(--border-color);
-		border-radius: 6px;
-		background: var(--surface-color);
+		padding: 4px 0;
+		border: none;
+		border-radius: 0;
+		background: transparent;
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		cursor: pointer;
-		transition: border-color 0.2s ease;
-		min-height: 38px;
+		transition: color 0.2s ease;
+		min-height: 32px;
 	}
 
 	.user-admin-checkbox:hover {
-		border-color: var(--primary-color);
+		color: var(--primary-color);
 	}
 
 	.user-admin-checkbox input {
@@ -860,7 +871,7 @@
 	}
 
 	.user-admin-checkbox:focus-within {
-		border-color: var(--primary-color);
+		color: var(--primary-color);
 	}
 
 	.user-admin-checkbox span {
@@ -1001,15 +1012,15 @@
 	}
 
 	.user-actions {
-		display: inline-flex;
+		display: flex;
+		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
+		gap: 0.35rem;
 	}
 
 	.user-action {
-		padding: 4px 8px;
+		padding: 6px 10px;
 		border-radius: 6px;
 		border: 1px solid var(--border-color);
 		background: var(--surface-color);
@@ -1018,7 +1029,10 @@
 		font-weight: 500;
 		cursor: pointer;
 		transition: all 0.2s ease;
-		white-space: nowrap;
+		white-space: normal;
+		width: 140px;
+		max-width: 100%;
+		text-align: center;
 	}
 
 	.user-action:hover {
@@ -4191,6 +4205,7 @@
 				<div class='setting-group' id='user-management-section' style='display:none;'>
 					<h4>User Management (Admin)</h4>
 					<form id='create-user-form' class='setting-item user-admin-form'>
+						<div class='user-admin-subtitle'>Create User</div>
 						<div class='user-admin-field'>
 							<label for='new-username'>Username</label>
 							<input type='text' id='new-username' class='user-input' placeholder='Username' required>
@@ -4215,6 +4230,7 @@
 						</div>
 					</form>
 					<div class='setting-item'>
+						<div class='user-admin-subtitle'>User List</div>
 						<div class='user-table-wrapper'>
 							<table id='user-table' class='user-table' aria-label='User list'>
 								<thead>
