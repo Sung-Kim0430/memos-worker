@@ -127,6 +127,9 @@ export async function handleTelegramProxy(request, env, session) {
 	}
 
 	const fileId = match[1];
+	if (!/^[A-Za-z0-9_-]+$/.test(fileId)) {
+		return errorResponse('INVALID_INPUT', 'Invalid file_id', 400);
+	}
 	const botToken = env.TELEGRAM_BOT_TOKEN;
 
 	if (!botToken) {
@@ -366,16 +369,16 @@ export async function handleTelegramWebhook(request, env, secret) {
 		await processNoteTags(db, noteId, finalContent);
 		await sendTelegramMessage(chatId, `✅ 笔记已保存！ (ID: ${noteId})`, botToken);
 
-	} catch (e) {
-		console.error("Telegram Webhook Error:", e.message);
-		if (noteId) {
-			try {
-				await env.DB.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId).run();
-				await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
-			} catch (cleanupError) {
-				console.error("Failed to cleanup note:", cleanupError.message);
+		} catch (e) {
+			console.error("Telegram Webhook Error:", e.message);
+			if (noteId) {
+				try {
+					await env.DB.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId).run();
+					await env.DB.prepare("DELETE FROM notes WHERE id = ?").bind(noteId).run();
+				} catch (cleanupError) {
+					console.error("Failed to cleanup note:", cleanupError.message);
+				}
 			}
-		}
 		if (cleanupKeys.length > 0) {
 			try {
 				await bucket.delete(cleanupKeys);
