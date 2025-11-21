@@ -1,4 +1,4 @@
-import { MAX_TIME_RANGE_MS, NOTES_PER_PAGE } from '../constants.js';
+import { MAX_PAGE, MAX_TIME_RANGE_MS, NOTES_PER_PAGE } from '../constants.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, requireSession } from '../utils/authz.js';
 import { handleNotesList } from './notes.js';
@@ -37,6 +37,9 @@ export async function handleSearchRequest(request, env, session) {
 	const page = Number(pageRaw);
 	if (!Number.isInteger(page) || page <= 0) {
 		return errorResponse('INVALID_PAGE', 'Invalid page parameter', 400);
+	}
+	if (page > MAX_PAGE) {
+		return errorResponse('INVALID_PAGE', 'Page out of range', 400);
 	}
 	const offset = (page - 1) * NOTES_PER_PAGE;
 	const limit = NOTES_PER_PAGE;

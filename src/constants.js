@@ -22,6 +22,7 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 
 export const MAX_TIME_RANGE_MS = 365 * 24 * 60 * 60 * 1000; // 时间范围上限（默认 1 年）
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 单次上传大小上限 10MB
+export const MAX_PAGE = 1000; // 防止过大分页拖垮查询
 
 export const SHARE_DEFAULT_TTL_SECONDS = 3600;
 export const SHARE_LOCK_TTL_SECONDS = 30;

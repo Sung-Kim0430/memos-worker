@@ -25,22 +25,39 @@ export async function processNoteTags(db, noteId, content) {
 	// 5. 将从所有安全片段中找到的标签进行去重
 	const uniqueTags = [...new Set(allTags)];
 
-	const statements = [];
-	statements.push(db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId));
+	const statements = [
+		db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(noteId)
+	];
 
 	if (uniqueTags.length > 0) {
+		const placeholders = uniqueTags.map(() => '(?)').join(',');
+		await db.prepare(`INSERT OR IGNORE INTO tags (name) VALUES ${placeholders}`).bind(...uniqueTags).run();
+
+		const tagRows = await db.prepare(
+			`SELECT id, name FROM tags WHERE name IN (${uniqueTags.map(() => '?').join(',')})`
+		).bind(...uniqueTags).all();
+
+		const idByName = new Map(tagRows.results.map(row => [row.name, row.id]));
 		for (const tagName of uniqueTags) {
-			await db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)").bind(tagName).run();
-			const tag = await db.prepare("SELECT id FROM tags WHERE name = ?").bind(tagName).first();
-			if (tag) {
+			const tagId = idByName.get(tagName);
+			if (tagId) {
 				statements.push(
 					db.prepare("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)")
-						.bind(noteId, tag.id)
+						.bind(noteId, tagId)
 				);
 			}
 		}
 	}
+
 	if (statements.length > 0) {
 		await db.batch(statements);
 	}
+}
+
+// 删除未被任何笔记引用的标签，避免标签表无限增长
+export async function cleanupUnusedTags(db) {
+	await db.prepare(`
+		DELETE FROM tags
+		WHERE id NOT IN (SELECT DISTINCT tag_id FROM note_tags)
+	`).run();
 }

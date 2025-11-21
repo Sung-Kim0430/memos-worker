@@ -1,4 +1,4 @@
-import { ALLOWED_UPLOAD_MIME_TYPES, ATTACHMENTS_PER_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, ATTACHMENTS_PER_PAGE, MAX_PAGE, MAX_UPLOAD_BYTES } from '../constants.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
 
@@ -106,6 +106,9 @@ export async function handleGetAllAttachments(request, env, session) {
 	const page = Number(pageRaw);
 	if (!Number.isInteger(page) || page <= 0) {
 		return errorResponse('INVALID_PAGE', 'Invalid page parameter', 400);
+	}
+	if (page > MAX_PAGE) {
+		return errorResponse('INVALID_PAGE', 'Page out of range', 400);
 	}
 	const limit = ATTACHMENTS_PER_PAGE;
 	const offset = (page - 1) * limit;
