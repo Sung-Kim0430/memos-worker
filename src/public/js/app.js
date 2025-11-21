@@ -37,6 +37,19 @@ window.fetch = (url, options = {}) => {
 	return __originalFetch(url, opts);
 };
 
+async function safeJson(response) {
+	const contentType = response.headers.get('content-type') || '';
+	if (contentType.includes('application/json')) {
+		return response.json();
+	}
+	try {
+		const text = await response.text();
+		return { error: { message: text } };
+	} catch (e) {
+		return { error: { message: 'Invalid response' } };
+	}
+}
+
 const textNodeOriginals = new WeakMap();
 let timelineDataCache = null;
 const getLocale = () => i18n.locale;
@@ -3938,7 +3951,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ username: username.value, password: password.value })
 			});
-			const data = await res.json();
+			const data = await safeJson(res);
 			if (!res.ok) throw new Error(extractErrorMessage(data, 'Invalid username or password.'));
 			currentUser.isAdmin = !!data.user?.isAdmin;
 			await loadUsersIfAdmin();
