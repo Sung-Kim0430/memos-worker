@@ -351,7 +351,7 @@ async function loadNote() {
 			let serverMessage = '';
 			try {
 				const err = await response.json();
-				serverMessage = err.error || '';
+				serverMessage = err?.error?.message || err?.error?.code || err?.error || '';
 			} catch (err) {
 				serverMessage = '';
 			}

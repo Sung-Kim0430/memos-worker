@@ -639,21 +639,31 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	// --- 全局设置管理 ---
 	const defaultSettings = DEFAULT_UI_SETTINGS;
 	let settings = { ...DEFAULT_UI_SETTINGS };
+	let settingsLoaded = false;
 
 	async function loadSettings() {
+		settingsLoaded = false;
 		try {
 			const response = await fetch('/api/settings');
-			if (!response.ok) throw new Error('Failed to fetch settings from server');
+			if (!response.ok) {
+				throw new Error(`Failed to fetch settings from server (status ${response.status})`);
+			}
 			const incoming = await response.json();
 			settings = { ...defaultSettings, ...incoming };
+			settingsLoaded = true;
+			return true;
 		} catch (error) {
 			console.error("Could not load settings:", error);
 			// showCustomAlert(`Error loading settings: ${error.message}. Using local defaults.`, 'error');
+			return false;
 		}
 	}
-	loadSettings();
 
 	async function saveSettings() {
+		if (!settingsLoaded) {
+			showCustomAlert('Settings are not loaded yet. Please try again after login.', 'error');
+			return;
+		}
 		try {
 			const response = await fetch('/api/settings', {
 				method: 'PUT',
@@ -1660,8 +1670,13 @@ function renderVisibilityOptions(selectEl, currentValue) {
 			const response = await fetch('/api/notes?page=1');
 			if (response.ok) {
 				const data = await response.json();
+				const loaded = await loadSettings();
 				// 显示应用主界面
 				showAppScreen();
+				if (loaded) {
+					applySettings();
+					await updateSettingsModalControls();
+				}
 				await loadUsersIfAdmin();
 				allNotesCache = data.notes;
 				renderNotes(data.notes);

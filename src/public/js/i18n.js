@@ -55,7 +55,7 @@ export class I18n {
 		const langMessages = this.translations[this.currentLanguage]?.messages || {};
 		const fallbackMessages = this.translations[this.fallback]?.messages || {};
 		if (langMessages[message]) return langMessages[message];
-		if (fallbackMessages[message]) return message;
+		if (fallbackMessages[message]) return fallbackMessages[message];
 		const langText = this.translations[this.currentLanguage]?.textMap || {};
 		if (langText[message]) return langText[message];
 
