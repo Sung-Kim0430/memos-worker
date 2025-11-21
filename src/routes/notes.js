@@ -171,14 +171,14 @@ export async function handleNotesList(request, env, session) {
 
 					// 【核心修改】在 INSERT 语句中加入新的 pics 与 owner/visibility
 					const insertStmt = db.prepare(
-						"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics, videos, owner_id, visibility) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)"
+						"INSERT INTO notes (content, files, is_pinned, created_at, updated_at, pics, videos, owner_id, visibility) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?) RETURNING id"
 					);
 					// 先用一个空的 files 数组插入
 					// 【核心修改】将提取出的 picUrls 绑定到 SQL 语句中
 					const ownerId = session?.id || null;
 					const allowedVisibility = ['private', 'users', 'public'];
 					const visibility = allowedVisibility.includes(requestedVisibility) ? requestedVisibility : 'private';
-					const { id: noteId } = await insertStmt.bind(
+					const insertedNote = await insertStmt.bind(
 						content,
 						"[]",
 						now,
@@ -188,11 +188,11 @@ export async function handleNotesList(request, env, session) {
 						ownerId,
 						visibility
 					).first();
+					const noteId = insertedNote?.id;
 					createdNoteId = noteId;
-				if (!noteId) {
-					throw new Error("Failed to create note and get ID.");
-				}
-
+					if (!noteId) {
+						throw new Error("Failed to create note and get ID.");
+					}
 				// --- 【重要逻辑调整】现在上传的文件，只有非图片类型才算作 "附件" (files) ---
 				for (const file of files) {
 					if (file.size > MAX_UPLOAD_BYTES) {
