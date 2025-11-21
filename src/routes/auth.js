@@ -162,6 +162,14 @@ function buildSessionHeaders(request, sessionId, csrfToken) {
 	return headers;
 }
 
+function buildSessionKvOptions() {
+	const expiresAt = Date.now() + SESSION_DURATION_SECONDS * 1000;
+	return {
+		expirationTtl: SESSION_DURATION_SECONDS,
+		metadata: { expiresAt }
+	};
+}
+
 export function validateCsrf(request, session) {
 	const method = request.method.toUpperCase();
 	if (['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -199,11 +207,12 @@ export async function isSessionAuthenticated(request, env) {
 	// 滑动过期：仅在剩余 TTL 较短时刷新，减少同步 KV 写放大
 	try {
 		const remaining = await env.NOTES_KV.getWithMetadata(sessionKey);
-		const secondsLeft = Number(remaining?.metadata?.expiration_ttl ?? 0);
-		if (!Number.isFinite(secondsLeft) || secondsLeft <= SESSION_DURATION_SECONDS * 0.25) {
+		const expiresAt = Number(remaining?.metadata?.expiresAt);
+		const secondsLeft = Number.isFinite(expiresAt) ? Math.floor((expiresAt - Date.now()) / 1000) : null;
+		if (secondsLeft === null || secondsLeft <= SESSION_DURATION_SECONDS * 0.25) {
 			// 异步续期，尽量不阻塞请求
 			request?.cf?.ctx?.waitUntil?.(
-				env.NOTES_KV.put(sessionKey, JSON.stringify(session), { expirationTtl: SESSION_DURATION_SECONDS })
+				env.NOTES_KV.put(sessionKey, JSON.stringify(session), buildSessionKvOptions())
 			);
 		}
 	} catch (e) {
@@ -235,18 +244,16 @@ export async function handleLogin(request, env) {
 			return errorResponse('RATE_LIMITED', 'Too many login attempts. Please try again later.', 429, { remaining: rate.remaining });
 		}
 		const user = await getUserByUsername(env, username);
-		if (user && await verifyPassword(password, user)) {
-			const sessionId = crypto.randomUUID();
-			const csrfToken = crypto.randomUUID();
-			const sessionData = { userId: user.id, username: user.username, isAdmin: !!user.is_admin, loggedInAt: Date.now(), csrfToken };
-			await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), {
-				expirationTtl: SESSION_DURATION_SECONDS,
-			});
-			await clearLoginFailures(env, request, username);
-			const headers = buildSessionHeaders(request, sessionId, csrfToken);
-			return jsonResponse({ success: true, user: { id: user.id, username: user.username, isAdmin: !!user.is_admin } }, 200, headers);
-		}
-		await recordLoginFailure(env, request, username);
+			if (user && await verifyPassword(password, user)) {
+				const sessionId = crypto.randomUUID();
+				const csrfToken = crypto.randomUUID();
+				const sessionData = { userId: user.id, username: user.username, isAdmin: !!user.is_admin, loggedInAt: Date.now(), csrfToken };
+				await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(sessionData), buildSessionKvOptions());
+				await clearLoginFailures(env, request, username);
+				const headers = buildSessionHeaders(request, sessionId, csrfToken);
+				return jsonResponse({ success: true, user: { id: user.id, username: user.username, isAdmin: !!user.is_admin } }, 200, headers);
+			}
+			await recordLoginFailure(env, request, username);
 	} catch (e) {
 		console.error("Login Error:", e);
 		return errorResponse('LOGIN_ERROR', 'Server error during login', 500, e.message);

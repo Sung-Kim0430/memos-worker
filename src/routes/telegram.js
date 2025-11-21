@@ -320,7 +320,9 @@ async function processTelegramUpdate(request, env) {
 			if (!contentFromTelegram.trim() && !photo && !document && !video) {
 				return jsonResponse({ success: true });
 			}
-		const settings = await env.NOTES_KV.get('user_settings', 'json') || DEFAULT_USER_SETTINGS;
+		const settingsKey = `user_settings:${ownerUser.id}`;
+		const savedSettings = await env.NOTES_KV.get(settingsKey, 'json');
+		const settings = { ...DEFAULT_USER_SETTINGS, ...(savedSettings || {}) };
 
 		// 1) 创建一个空内容的 note 占位
 		const now = Date.now();
