@@ -141,7 +141,11 @@ async function recordLoginFailure(env, request, username = '') {
 
 async function clearLoginFailures(env, request, username = '') {
 	const key = buildLoginRateLimitKey(request, username);
-	await env.NOTES_KV.delete(key);
+	try {
+		await env.NOTES_KV.delete(key);
+	} catch (e) {
+		console.error("Failed to clear login failures:", e);
+	}
 }
 
 function buildSetCookie(name, value, request, { maxAge = SESSION_DURATION_SECONDS, httpOnly = false } = {}) {
@@ -176,7 +180,8 @@ export async function isSessionAuthenticated(request, env) {
 	const cookieHeader = request.headers.get('Cookie');
 	const sessionId = parseSessionIdFromCookie(cookieHeader);
 	if (!sessionId) return null;
-	const session = await env.NOTES_KV.get(`session:${sessionId}`, 'json');
+	const sessionKey = `session:${sessionId}`;
+	const session = await env.NOTES_KV.get(sessionKey, 'json');
 	if (!session || !session.userId) {
 		return null;
 	}
@@ -191,9 +196,16 @@ export async function isSessionAuthenticated(request, env) {
 		await env.NOTES_KV.delete(`session:${sessionId}`);
 		return null;
 	}
-	// 滑动过期：只要请求通过校验，就刷新 Session TTL
+	// 滑动过期：仅在剩余 TTL 较短时刷新，减少同步 KV 写放大
 	try {
-		await env.NOTES_KV.put(`session:${sessionId}`, JSON.stringify(session), { expirationTtl: SESSION_DURATION_SECONDS });
+		const remaining = await env.NOTES_KV.getWithMetadata(sessionKey);
+		const secondsLeft = Number(remaining?.metadata?.expiration_ttl ?? 0);
+		if (!Number.isFinite(secondsLeft) || secondsLeft <= SESSION_DURATION_SECONDS * 0.25) {
+			// 异步续期，尽量不阻塞请求
+			request?.cf?.ctx?.waitUntil?.(
+				env.NOTES_KV.put(sessionKey, JSON.stringify(session), { expirationTtl: SESSION_DURATION_SECONDS })
+			);
+		}
 	} catch (e) {
 		console.error("Failed to extend session TTL:", e);
 	}
