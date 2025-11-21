@@ -444,6 +444,36 @@
 		}
 	}
 
+	@media (max-width: 960px), (orientation: portrait) {
+		.container {
+			min-width: 0 !important;
+			width: 100%;
+			max-width: 100%;
+			padding: 0 0.75rem;
+		}
+
+		#main-content-area .container {
+			width: 100%;
+			max-width: 100%;
+		}
+
+		input[type="text"],
+		input[type="password"],
+		input[type="email"],
+		input[type="number"],
+		input[type="file"],
+		input[type="search"],
+		input[type="url"],
+		select,
+		textarea,
+		.user-input,
+		.user-select,
+		.visibility-select {
+			max-width: 100%;
+			box-sizing: border-box;
+		}
+	}
+
 	@media (max-width: 1300px) and (min-width: 1250px) {
 		#app-layout-container {
 			grid-template-columns: 300px 800px;
