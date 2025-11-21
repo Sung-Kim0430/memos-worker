@@ -343,7 +343,11 @@ export async function handlePublicNoteRequest(publicId, env) {
 
 				let kvPayload = null;
 				if (fileMatch) {
-					kvPayload = { noteId: parseInt(fileMatch[1]), fileId: fileMatch[2], fileName: 'media' };
+					const targetNoteId = parseInt(fileMatch[1]);
+					// 仅允许当前正在分享的笔记内部的文件生成公开链接，避免跨笔记 IDOR
+					if (Number.isFinite(targetNoteId) && targetNoteId === note.id) {
+						kvPayload = { noteId: targetNoteId, fileId: fileMatch[2], fileName: 'media' };
+					}
 				} else if (imageMatch) {
 					kvPayload = { standaloneImageId: imageMatch[1], fileName: 'image.png' };
 				} else if (tgProxyMatch) {
@@ -355,7 +359,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 				return `/api/public/file/${publicFileId}`;
 			}
 
-			return privateUrl; // 如果不是私有链接，则原样返回
+			return privateUrl; // 如果不是有效的私有链接，则原样返回
 		};
 
 		// 1. 处理笔记正文 `content` 中的内联图片和视频

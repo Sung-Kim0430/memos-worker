@@ -8,7 +8,8 @@ export async function handleGetSettings(request, env, session) {
 		return authError;
 	}
 
-	let savedSettings = await env.NOTES_KV.get('user_settings', 'json');
+	const key = `user_settings:${session.id}`;
+	let savedSettings = await env.NOTES_KV.get(key, 'json');
 
 	// 如果 KV 中没有设置，则返回默认值
 	if (!savedSettings) {
@@ -19,7 +20,7 @@ export async function handleGetSettings(request, env, session) {
 }
 
 export async function handleSetSettings(request, env, session) {
-	const authError = requireAdmin(session);
+	const authError = requireSession(session);
 	if (authError) {
 		return authError;
 	}
@@ -30,7 +31,11 @@ export async function handleSetSettings(request, env, session) {
 		} catch (e) {
 			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
 		}
-		await env.NOTES_KV.put('user_settings', JSON.stringify(settingsToSave));
+		if (!settingsToSave || typeof settingsToSave !== 'object' || Array.isArray(settingsToSave)) {
+			return errorResponse('INVALID_INPUT', 'Invalid settings payload', 400);
+		}
+		const key = `user_settings:${session.id}`;
+		await env.NOTES_KV.put(key, JSON.stringify(settingsToSave));
 		return jsonResponse({ success: true });
 	} catch (e) {
 		console.error("Set Settings Error:", e);
