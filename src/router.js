@@ -139,7 +139,7 @@ async function handleAuthenticatedRoutes(pathname, request, env, session) {
 	if (pathname === '/api/tags') {
 		return handleTagsList(request, env, session);
 	}
-	const fileMatch = pathname.match(/^\/api\/files\/([^\/]+)\/([^\/]+)$/);
+	const fileMatch = pathname.match(/^\/api\/files\/(\d+)\/([a-zA-Z0-9-]+)$/);
 	if (fileMatch) {
 		const [, noteId, fileId] = fileMatch;
 		return handleFileRequest(noteId, fileId, request, env, session);
@@ -154,7 +154,7 @@ async function handleAuthenticatedRoutes(pathname, request, env, session) {
 	if (pathname === '/api/search') {
 		return handleSearchRequest(request, env, session);
 	}
-	const noteDetailMatch = pathname.match(/^\/api\/notes\/([^\/]+)$/);
+	const noteDetailMatch = pathname.match(/^\/api\/notes\/(\d+)$/);
 	if (noteDetailMatch) {
 		const noteId = noteDetailMatch[1];
 		return handleNoteDetail(request, noteId, env, session);

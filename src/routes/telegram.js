@@ -1,12 +1,20 @@
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
 import { ensureAdminUser } from './auth.js';
-import { DEFAULT_USER_SETTINGS } from '../constants.js';
+import { ALLOWED_UPLOAD_MIME_TYPES, DEFAULT_USER_SETTINGS, MAX_UPLOAD_BYTES } from '../constants.js';
 import { errorResponse } from '../utils/response.js';
 import { requireSession } from '../utils/authz.js';
 
 function parseAuthorizedIds(raw) {
 	if (!raw) return [];
 	return raw.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function exceedsSizeLimit(size) {
+	return Number.isFinite(size) && size > MAX_UPLOAD_BYTES;
+}
+
+function isAllowedMimeType(mime) {
+	return !!mime && ALLOWED_UPLOAD_MIME_TYPES.includes(mime);
 }
 
 async function resolveTelegramUser(env, telegramUserId) {
@@ -238,6 +246,28 @@ export async function handleTelegramWebhook(request, env, secret) {
 		const document = message.document;
 		const video = message.video;
 
+		// 基础校验：限制体积和 MIME 类型，避免滥用上传
+		const validationErrors = [];
+		if (photo?.file_size && exceedsSizeLimit(photo.file_size)) {
+			validationErrors.push('照片大小超过上限');
+		}
+		if (video?.file_size && exceedsSizeLimit(video.file_size)) {
+			validationErrors.push('视频大小超过上限');
+		}
+		if (document?.file_size && exceedsSizeLimit(document.file_size)) {
+			validationErrors.push('文件大小超过上限');
+		}
+		if (video?.mime_type && !isAllowedMimeType(video.mime_type)) {
+			validationErrors.push('不支持的视频类型');
+		}
+		if (document?.mime_type && !isAllowedMimeType(document.mime_type)) {
+			validationErrors.push('不支持的文件类型');
+		}
+		if (validationErrors.length > 0) {
+			await sendTelegramMessage(chatId, `❌ 无法保存笔记：${validationErrors.join('、')}（上限 ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))}MB）`, botToken);
+			return new Response('OK', { status: 200 });
+		}
+
 		if (!contentFromTelegram.trim() && !photo && !document && !video) {
 			return new Response('OK', { status: 200 });
 		}
@@ -270,6 +300,10 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const fileInfoRes = await fetch(getFileUrl);
 				const fileInfo = await fileInfoRes.json();
 				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误: ${fileInfo.description}`);
+				const photoSize = Number(fileInfo.result?.file_size);
+				if (exceedsSizeLimit(photoSize)) {
+					throw new Error('Telegram photo exceeds size limit');
+				}
 				const filePath = fileInfo.result.file_path;
 				const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
 				const fileRes = await fetch(downloadUrl);
@@ -296,6 +330,10 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const fileInfoRes = await fetch(getFileUrl);
 				const fileInfo = await fileInfoRes.json();
 				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误 (video): ${fileInfo.description}`);
+				const videoSize = Number(fileInfo.result?.file_size);
+				if (exceedsSizeLimit(videoSize)) {
+					throw new Error('Telegram video exceeds size limit');
+				}
 				const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
 				const videoRes = await fetch(downloadUrl);
 				if (!videoRes.ok) throw new Error("从 Telegram 下载视频失败。");
@@ -333,6 +371,10 @@ export async function handleTelegramWebhook(request, env, secret) {
 				const fileInfoRes = await fetch(getFileUrl);
 				const fileInfo = await fileInfoRes.json();
 				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误 (document): ${fileInfo.description}`);
+				const docSize = Number(fileInfo.result?.file_size);
+				if (exceedsSizeLimit(docSize)) {
+					throw new Error('Telegram document exceeds size limit');
+				}
 				const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
 				const fileRes = await fetch(downloadUrl);
 				if (!fileRes.ok) throw new Error("从 Telegram 下载文件失败。");

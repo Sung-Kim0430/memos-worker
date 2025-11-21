@@ -21,6 +21,20 @@ export function extractVideoUrls(content) {
 	return matches.map(match => match[1]);
 }
 
+// 将 Markdown/纯文本内容进行安全转义，避免在不可信渲染环境下触发脚本
+export function sanitizeContent(content = '') {
+	let safe = content
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+	// 去掉 Markdown 链接中的危险协议
+	safe = safe.replace(/\(\s*javascript:/gi, '(#');
+	safe = safe.replace(/\(\s*data:text\/html/gi, '(#');
+	return safe;
+}
+
 /**
  * 从扁平的节点列表中构建层级树结构
  * @param {Array<object>} nodes - 从数据库查询出的节点数组

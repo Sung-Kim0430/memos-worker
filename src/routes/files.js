@@ -1,14 +1,22 @@
 import { errorResponse } from '../utils/response.js';
 import { canAccessNote, requireSession } from '../utils/authz.js';
 
+function parseNoteIdStrict(noteId) {
+	if (noteId === null || noteId === undefined) return null;
+	const num = Number(noteId);
+	if (!Number.isInteger(num) || num <= 0) return null;
+	if (String(num) !== String(noteId).trim()) return null;
+	return num;
+}
+
 export async function handleFileRequest(noteId, fileId, request, env, session) {
 	const authError = requireSession(session);
 	if (authError) {
 		return authError;
 	}
 	const db = env.DB;
-	const id = parseInt(noteId);
-	if (isNaN(id)) {
+	const id = parseNoteIdStrict(noteId);
+	if (!id) {
 		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 

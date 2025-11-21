@@ -1,6 +1,15 @@
 import { SHARE_DEFAULT_TTL_SECONDS, SHARE_LOCK_TTL_SECONDS } from '../constants.js';
+import { sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { canModifyNote, requireSession } from '../utils/authz.js';
+
+function parseNoteIdStrict(noteId) {
+	if (noteId === null || noteId === undefined) return null;
+	const num = Number(noteId);
+	if (!Number.isInteger(num) || num <= 0) return null;
+	if (String(num) !== String(noteId).trim()) return null;
+	return num;
+}
 
 async function hashString(input) {
 	const data = new TextEncoder().encode(input);
@@ -46,28 +55,14 @@ async function cleanupPublicFilesForShare(env, shareId) {
 	}
 }
 
-function sanitizeContent(content = '') {
-	// 全量转义 HTML，避免前端以 HTML 方式渲染时被注入
-	let safe = content
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
-	// 同时去掉 Markdown 链接中显式的危险协议
-	safe = safe.replace(/\(\s*javascript:/gi, '(#');
-	safe = safe.replace(/\(\s*data:text\/html/gi, '(#');
-	return safe;
-}
-
 export async function handleShareFileRequest(noteId, fileId, request, env, session) {
 	const authError = requireSession(session);
 	if (authError) {
 		return authError;
 	}
 	const db = env.DB;
-	const id = parseInt(noteId);
-	if (isNaN(id)) {
+	const id = parseNoteIdStrict(noteId);
+	if (!id) {
 		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 
@@ -115,7 +110,7 @@ export async function handleShareFileRequest(noteId, fileId, request, env, sessi
 
 		return jsonResponse({ url: publicUrl });
 	} catch (e) {
-		console.error(`Share File Error (noteId: ${noteId}, fileId: ${fileId}):`, e.message);
+		console.error(`Share File Error (noteId: ${noteId}, fileId: ${fileId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database error while generating link', 500, e.message);
 	}
 }
@@ -194,10 +189,14 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 	if (authError) {
 		return authError;
 	}
-	const lockKey = `share_lock:${noteId}`;
+	const parsedNoteId = parseNoteIdStrict(noteId);
+	if (!parsedNoteId) {
+		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
+	}
+	const lockKey = `share_lock:${parsedNoteId}`;
 	let lockAcquired = false;
 	try {
-		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
+		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(parsedNoteId).first();
 		if (!note) {
 			return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 		}
@@ -221,8 +220,8 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 		} catch (e) {
 			return errorResponse('INVALID_JSON', 'Invalid JSON body', 400);
 		}
-		const noteShareKey = `note_share:${noteId}`;
-		const publicMemoKey = `public_memo:${body.publicId}`;
+			const noteShareKey = `note_share:${parsedNoteId}`;
+			const publicMemoKey = `public_memo:${body.publicId}`;
 
 		// --- 如果提供了 publicId 和新的 expirationTtl，则更新原有链接 ---
 		if (body.publicId) {
@@ -256,7 +255,7 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 
 		} else {
 			// --- 创建或获取新链接 ---
-			let publicId = await env.NOTES_KV.get(`note_share:${noteId}`);
+			let publicId = await env.NOTES_KV.get(`note_share:${parsedNoteId}`);
 
 			if (!publicId) {
 				publicId = crypto.randomUUID();
@@ -268,8 +267,8 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 				}
 
 				await Promise.all([
-					env.NOTES_KV.put(`public_memo:${publicId}`, JSON.stringify({ noteId: parseInt(noteId, 10) }), options),
-					env.NOTES_KV.put(`note_share:${noteId}`, publicId, options)
+					env.NOTES_KV.put(`public_memo:${publicId}`, JSON.stringify({ noteId: parsedNoteId }), options),
+					env.NOTES_KV.put(`note_share:${parsedNoteId}`, publicId, options)
 				]);
 			}
 
@@ -280,7 +279,7 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 			return jsonResponse({ displayUrl, rawUrl, publicId }); // 返回 publicId 以便前端更新
 		}
 	} catch (e) {
-		console.error(`Share/Update Note Error (noteId: ${noteId}):`, e.message);
+		console.error(`Share/Update Note Error (noteId: ${noteId}):`, e);
 		return errorResponse('SHARE_FAILED', 'Database or KV error during operation', 500, e.message);
 	} finally {
 		if (lockAcquired) {
@@ -294,25 +293,29 @@ export async function handleUnshareNoteRequest(noteId, env, session) {
 	if (authError) {
 		return authError;
 	}
+	const parsedNoteId = parseNoteIdStrict(noteId);
+	if (!parsedNoteId) {
+		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
+	}
 	try {
-		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(noteId).first();
+		const note = await env.DB.prepare("SELECT owner_id FROM notes WHERE id = ?").bind(parsedNoteId).first();
 		if (!note) {
 			return errorResponse('NOTE_NOT_FOUND', 'Note not found', 404);
 		}
 		if (!canModifyNote(note, session)) {
 			return errorResponse('FORBIDDEN', 'Forbidden', 403);
 		}
-		const publicId = await env.NOTES_KV.get(`note_share:${noteId}`);
+		const publicId = await env.NOTES_KV.get(`note_share:${parsedNoteId}`);
 		if (publicId) {
 			await Promise.all([
 				env.NOTES_KV.delete(`public_memo:${publicId}`),
-				env.NOTES_KV.delete(`note_share:${noteId}`)
+				env.NOTES_KV.delete(`note_share:${parsedNoteId}`)
 			]);
 			await cleanupPublicFilesForShare(env, publicId);
 		}
 		return jsonResponse({ success: true, message: 'Sharing has been revoked.' });
 	} catch (e) {
-		console.error(`Unshare Note Error (noteId: ${noteId}):`, e.message);
+		console.error(`Unshare Note Error (noteId: ${noteId}):`, e);
 		return errorResponse('SHARE_REVOKE_FAILED', 'Database error while revoking link', 500, e.message);
 	}
 }
@@ -416,7 +419,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 		return jsonResponse(note);
 
 	} catch (e) {
-		console.error(`Public Note Error (publicId: ${publicId}):`, e.message);
+		console.error(`Public Note Error (publicId: ${publicId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -437,7 +440,7 @@ export async function handlePublicRawNoteRequest(publicId, env) {
 		const headers = new Headers({ 'Content-Type': 'text/plain; charset=utf-8' });
 		return new Response(note.content, { headers });
 	} catch (e) {
-		console.error(`Public Raw Note Error (publicId: ${publicId}):`, e.message);
+		console.error(`Public Raw Note Error (publicId: ${publicId}):`, e);
 		return errorResponse('DATABASE_ERROR', 'Server Error', 500, e.message);
 	}
 }

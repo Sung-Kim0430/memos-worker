@@ -331,12 +331,18 @@ export async function handleUserDelete(env, targetUserId, session) {
 		return errorResponse('DELETE_USER_FAILED', 'Failed to delete user', 500, e.message);
 	}
 	// 清理该用户相关的会话
-	const list = await env.NOTES_KV.list({ prefix: 'session:' });
-	for (const item of list.keys) {
-		const payload = await env.NOTES_KV.get(item.name, 'json');
-		if (payload?.userId === targetUserId) {
-			await env.NOTES_KV.delete(item.name);
+	let cursor = undefined;
+	let complete = false;
+	while (!complete) {
+		const list = await env.NOTES_KV.list({ prefix: 'session:', cursor });
+		for (const item of list.keys) {
+			const payload = await env.NOTES_KV.get(item.name, 'json');
+			if (payload?.userId === targetUserId) {
+				await env.NOTES_KV.delete(item.name);
+			}
 		}
+		cursor = list.cursor;
+		complete = list.list_complete || !cursor;
 	}
 	return jsonResponse({ success: true });
 }

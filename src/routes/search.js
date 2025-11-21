@@ -1,4 +1,5 @@
 import { MAX_PAGE, MAX_TIME_RANGE_MS, NOTES_PER_PAGE } from '../constants.js';
+import { sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, requireSession } from '../utils/authz.js';
 import { handleNotesList } from './notes.js';
@@ -117,6 +118,9 @@ export async function handleSearchRequest(request, env, session) {
 		notes.forEach(note => {
 			if (typeof note.files === 'string') {
 				try { note.files = JSON.parse(note.files); } catch (e) { note.files = []; }
+			}
+			if (typeof note.content === 'string') {
+				note.content_safe = sanitizeContent(note.content);
 			}
 		});
 		return jsonResponse({ notes, hasMore });

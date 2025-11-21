@@ -1,5 +1,5 @@
 import { ALLOWED_UPLOAD_MIME_TYPES, MAX_PAGE, MAX_TIME_RANGE_MS, MAX_UPLOAD_BYTES, NOTES_PER_PAGE, VISIBILITY_OPTIONS } from '../constants.js';
-import { extractImageUrls, extractVideoUrls } from '../utils/content.js';
+import { extractImageUrls, extractVideoUrls, sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
@@ -26,6 +26,21 @@ function parsePositiveInt(value, fallback = 1) {
 function isValidTimestamp(value) {
 	const num = Number(value);
 	return Number.isFinite(num) && num > 0;
+}
+
+function parseNoteIdStrict(noteId) {
+	if (noteId === null || noteId === undefined) return null;
+	const num = Number(noteId);
+	if (!Number.isInteger(num) || num <= 0) return null;
+	if (String(num) !== String(noteId).trim()) return null;
+	return num;
+}
+
+function attachSafeContent(target) {
+	if (target && typeof target.content === 'string') {
+		target.content_safe = sanitizeContent(target.content);
+	}
+	return target;
 }
 
 function safeParseJsonArray(value) {
@@ -139,6 +154,7 @@ export async function handleNotesList(request, env, session) {
 					note.files = safeParseJsonArray(note.files);
 					note.pics = safeParseJsonArray(note.pics);
 					note.videos = safeParseJsonArray(note.videos);
+					attachSafeContent(note);
 				});
 
 				return jsonResponse({ notes, hasMore });
@@ -225,6 +241,7 @@ export async function handleNotesList(request, env, session) {
 					}
 					newNote.owner_id = ownerId;
 					newNote.visibility = visibility;
+					attachSafeContent(newNote);
 
 					return jsonResponse(newNote, 201);
 				} catch (err) {
@@ -245,7 +262,7 @@ export async function handleNotesList(request, env, session) {
 			}
 		}
 	} catch (e) {
-		console.error("D1 Error:", e.message, e.cause);
+		console.error("D1 Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -256,8 +273,8 @@ export async function handleNoteDetail(request, noteId, env, session) {
 		return authError;
 	}
 	const db = env.DB;
-	const id = parseInt(noteId);
-	if (isNaN(id)) {
+	const id = parseNoteIdStrict(noteId);
+	if (!id) {
 		return errorResponse('INVALID_NOTE_ID', 'Invalid Note ID', 400);
 	}
 
@@ -282,12 +299,12 @@ export async function handleNoteDetail(request, noteId, env, session) {
 		switch (request.method) {
 			case 'GET': {
 				// 返回当前笔记详情（解析后的附件/媒体字段）
-				return jsonResponse({
+				return jsonResponse(attachSafeContent({
 					...existingNote,
 					files: existingNote.files,
 					pics: existingPics,
 					videos: existingVideos
-				});
+				}));
 			}
 
 			case 'PUT': {
@@ -470,6 +487,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				updatedNote.files = safeParseJsonArray(updatedNote.files);
 				updatedNote.pics = safeParseJsonArray(updatedNote.pics);
 				updatedNote.videos = safeParseJsonArray(updatedNote.videos);
+				attachSafeContent(updatedNote);
 				return jsonResponse(updatedNote);
 			} catch (err) {
 				if (newUploads.length > 0) {
@@ -558,7 +576,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 			}
 		}
 	} catch (e) {
-		console.error("D1 Error:", e.message, e.cause);
+		console.error("D1 Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -763,6 +781,7 @@ export async function handleMergeNotes(request, env, session) {
 			try { updatedMergedNote.videos = JSON.parse(updatedMergedNote.videos); } catch (e) { /* keep raw */ }
 		}
 
+		attachSafeContent(updatedMergedNote);
 		return jsonResponse(updatedMergedNote);
 
 		} catch (e) {

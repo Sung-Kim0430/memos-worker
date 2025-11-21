@@ -1,3 +1,4 @@
+import { MAX_TIME_RANGE_MS } from '../constants.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, requireSession } from '../utils/authz.js';
 
@@ -18,32 +19,30 @@ export async function handleStatsRequest(request, env, session) {
 	const db = env.DB;
 	try {
 		const access = buildAccessCondition(session, null); // 使用无别名条件，避免裸表查询出错
-		const memosCountQuery = db.prepare(`SELECT COUNT(*) as total FROM notes WHERE ${access.clause}`);
 		const tagAccess = buildAccessCondition(session, 'n');
-		const tagsCountQuery = db.prepare(`
-			SELECT COUNT(DISTINCT nt.tag_id) as total
-			FROM note_tags nt
-			JOIN notes n ON nt.note_id = n.id
-			WHERE ${tagAccess.clause}
+		const statsStmt = db.prepare(`
+			WITH memo_stats AS (
+				SELECT COUNT(*) AS memos, MIN(updated_at) AS oldestNoteTimestamp
+				FROM notes
+				WHERE ${access.clause}
+			),
+			tag_stats AS (
+				SELECT COUNT(DISTINCT nt.tag_id) AS tags
+				FROM note_tags nt
+				JOIN notes n ON nt.note_id = n.id
+				WHERE ${tagAccess.clause}
+			)
+			SELECT memos, tags, oldestNoteTimestamp FROM memo_stats CROSS JOIN tag_stats
 		`);
-		const oldestNoteQuery = db.prepare(`SELECT MIN(updated_at) as oldest_ts FROM notes WHERE ${access.clause}`);
+		const statsRow = await statsStmt.bind(...access.bindings, ...tagAccess.bindings).first();
 
-		// 使用 Promise.all 并行执行所有查询，以获得最佳性能
-		const [memosResult, tagsResult, oldestNoteResult] = await Promise.all([
-			memosCountQuery.bind(...access.bindings).first(),
-			tagsCountQuery.bind(...tagAccess.bindings).first(),
-			oldestNoteQuery.bind(...access.bindings).first()
-		]);
-
-		// 组装最终的 JSON 响应
-		const stats = {
-			memos: memosResult.total || 0,
-			tags: tagsResult.total || 0,
-			oldestNoteTimestamp: oldestNoteResult.oldest_ts || null
-		};
-		return jsonResponse(stats);
+		return jsonResponse({
+			memos: statsRow?.memos || 0,
+			tags: statsRow?.tags || 0,
+			oldestNoteTimestamp: statsRow?.oldestNoteTimestamp || null
+		});
 	} catch (e) {
-		console.error("Stats Error:", e.message);
+		console.error("Stats Error:", e);
 		return errorResponse('DATABASE_ERROR', 'Database Error', 500, e.message);
 	}
 }
@@ -60,6 +59,7 @@ export async function handleTimelineRequest(request, env, session) {
 		if (!isValidTimezone(timezone)) {
 			return errorResponse('INVALID_TIMEZONE', 'Invalid timezone', 400);
 		}
+		const minTimestamp = Math.max(0, Date.now() - MAX_TIME_RANGE_MS);
 		const access = buildAccessCondition(session, null); // 时间线同样使用无别名条件
 		const stmt = db.prepare(`
 			SELECT
@@ -68,11 +68,11 @@ export async function handleTimelineRequest(request, env, session) {
 				CAST(strftime('%d', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS day,
 				COUNT(*) as count
 			FROM notes
-			WHERE ${access.clause}
+			WHERE ${access.clause} AND updated_at >= ?
 			GROUP BY year, month, day
 			ORDER BY year DESC, month DESC, day DESC
 		`);
-		const { results } = await stmt.bind(...access.bindings).all();
+		const { results } = await stmt.bind(...access.bindings, minTimestamp).all();
 		const timeline = {};
 		for (const row of results || []) {
 			const year = row.year;
