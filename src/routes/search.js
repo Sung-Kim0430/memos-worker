@@ -76,14 +76,18 @@ export async function handleSearchRequest(request, env, session) {
 			const now = Date.now();
 			if (
 				Number.isFinite(startMs) && Number.isFinite(endMs) &&
-				startMs > 0 && endMs > 0 && startMs < endMs &&
-				endMs <= now + MAX_TIME_RANGE_MS
+				startMs > 0 && endMs > 0 &&
+				startMs < endMs &&
+				endMs <= now &&
+				(endMs - startMs) <= MAX_TIME_RANGE_MS
 			) {
 				whereClauses.push("n.updated_at >= ? AND n.updated_at < ?");
 				bindings.push(startMs, endMs);
 			} else {
 				return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 			}
+		} else if (startTimestamp || endTimestamp) {
+			return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 		}
 		if (tagName) {
 			joinClause = `

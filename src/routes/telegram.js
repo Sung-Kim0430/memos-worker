@@ -1,4 +1,4 @@
-import { processNoteTags } from '../utils/tags.js';
+import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
 import { ensureAdminUser } from './auth.js';
 import { DEFAULT_USER_SETTINGS } from '../constants.js';
 import { errorResponse } from '../utils/response.js';
@@ -367,6 +367,7 @@ export async function handleTelegramWebhook(request, env, secret) {
 		).run();
 
 		await processNoteTags(db, noteId, finalContent);
+		await cleanupUnusedTags(db);
 		await sendTelegramMessage(chatId, `✅ 笔记已保存！ (ID: ${noteId})`, botToken);
 
 		} catch (e) {

@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS note_tags (
   FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
 
+-- 常用查询索引
+CREATE INDEX IF NOT EXISTS idx_notes_owner_visibility_updated ON notes(owner_id, visibility, updated_at);
+CREATE INDEX IF NOT EXISTS idx_note_tags_tag_id ON note_tags(tag_id);
+
 
 CREATE TABLE IF NOT EXISTS nodes (
   id TEXT PRIMARY KEY,

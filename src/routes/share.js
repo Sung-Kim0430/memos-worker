@@ -47,10 +47,17 @@ async function cleanupPublicFilesForShare(env, shareId) {
 }
 
 function sanitizeContent(content = '') {
-	return content
-		.replace(/<script/gi, '&lt;script')
-		.replace(/<\/script>/gi, '&lt;/script&gt;')
-		.replace(/on\w+\s*=/gi, 'x-on-removed=');
+	// 全量转义 HTML，避免前端以 HTML 方式渲染时被注入
+	let safe = content
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+	// 同时去掉 Markdown 链接中显式的危险协议
+	safe = safe.replace(/\(\s*javascript:/gi, '(#');
+	safe = safe.replace(/\(\s*data:text\/html/gi, '(#');
+	return safe;
 }
 
 export async function handleShareFileRequest(noteId, fileId, request, env, session) {

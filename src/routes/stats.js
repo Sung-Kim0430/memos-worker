@@ -17,7 +17,7 @@ export async function handleStatsRequest(request, env, session) {
 	}
 	const db = env.DB;
 	try {
-		const access = buildAccessCondition(session);
+		const access = buildAccessCondition(session, null); // 使用无别名条件，避免裸表查询出错
 		const memosCountQuery = db.prepare(`SELECT COUNT(*) as total FROM notes WHERE ${access.clause}`);
 		const tagAccess = buildAccessCondition(session, 'n');
 		const tagsCountQuery = db.prepare(`
@@ -60,7 +60,7 @@ export async function handleTimelineRequest(request, env, session) {
 		if (!isValidTimezone(timezone)) {
 			return errorResponse('INVALID_TIMEZONE', 'Invalid timezone', 400);
 		}
-		const access = buildAccessCondition(session);
+		const access = buildAccessCondition(session, null); // 时间线同样使用无别名条件
 		const stmt = db.prepare(`
 			SELECT
 				CAST(strftime('%Y', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS year,

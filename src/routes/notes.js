@@ -86,21 +86,24 @@ export async function handleNotesList(request, env, session) {
 				}
 
 				if (startTimestamp && endTimestamp) {
-					// 将字符串时间戳转换为数字并校验范围
 					const startMs = Number(startTimestamp);
 					const endMs = Number(endTimestamp);
-
 					const now = Date.now();
 					if (
 						Number.isFinite(startMs) && Number.isFinite(endMs) &&
-						startMs > 0 && endMs > 0 && startMs < endMs &&
-						endMs <= now + MAX_TIME_RANGE_MS
+						startMs > 0 && endMs > 0 &&
+						startMs < endMs &&
+						endMs <= now &&
+						(endMs - startMs) <= MAX_TIME_RANGE_MS
 					) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");
 						bindings.push(startMs, endMs);
 					} else {
 						return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 					}
+				} else if (startTimestamp || endTimestamp) {
+					// 只传入单端时间戳时视为无效
+					return errorResponse('INVALID_TIME_RANGE', 'Invalid time range', 400);
 				}
 				if (tagName) {
 					joinClause = `
@@ -414,6 +417,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 							return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 						}
 						await processNoteTags(db, id, content);
+						await cleanupUnusedTags(db);
 						lastKnownUpdatedAt = newTimestamp;
 						if (pendingR2Deletions.length > 0) {
 							await bucket.delete(pendingR2Deletions);
