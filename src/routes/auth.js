@@ -208,7 +208,11 @@ export async function isSessionAuthenticated(request, env) {
 	try {
 		const remaining = await env.NOTES_KV.getWithMetadata(sessionKey);
 		const expiresAt = Number(remaining?.metadata?.expiresAt);
-		const secondsLeft = Number.isFinite(expiresAt) ? Math.floor((expiresAt - Date.now()) / 1000) : null;
+		const kvExpirationSeconds = Number(remaining?.expiration);
+		const deriveSecondsLeft = (expiryMs) => Math.floor((expiryMs - Date.now()) / 1000);
+		const secondsLeft = Number.isFinite(expiresAt)
+			? deriveSecondsLeft(expiresAt)
+			: (Number.isFinite(kvExpirationSeconds) ? kvExpirationSeconds - Math.floor(Date.now() / 1000) : null);
 		if (secondsLeft === null || secondsLeft <= SESSION_DURATION_SECONDS * 0.25) {
 			// 异步续期，尽量不阻塞请求
 			request?.cf?.ctx?.waitUntil?.(
