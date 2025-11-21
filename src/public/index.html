@@ -792,9 +792,8 @@
 		gap: 0.75rem;
 		align-items: start;
 		justify-content: stretch;
-		padding: 0.75rem 0;
-		padding-left: 0;
-		width: 100%;
+		padding: 0.75rem 1rem;
+		width: min(720px, 100%);
 	}
 
 	.user-admin-field {
@@ -803,30 +802,26 @@
 		gap: 0.35rem;
 		grid-column: 1 / -1;
 		width: 100%;
+		max-width: 480px;
 	}
 
 	.setting-item.user-admin-form .user-admin-field .user-input {
 		width: 100%;
+		max-width: 100%;
 	}
 
 	.user-admin-inline {
 		grid-column: 1 / -1;
-		display: grid;
-		grid-template-columns: 1fr auto;
+		display: flex;
 		align-items: center;
 		gap: 0.75rem;
+		flex-wrap: wrap;
+		width: 100%;
+		max-width: 480px;
 	}
 
 	.user-admin-inline .user-admin-field {
-		grid-column: auto;
 		margin: 0;
-	}
-
-	@media (max-width: 640px) {
-		.user-admin-inline {
-			grid-template-columns: 1fr auto;
-			align-items: center;
-		}
 	}
 
 	.user-admin-field label {
@@ -875,10 +870,10 @@
 
 	.user-admin-actions {
 		display: flex;
-		justify-content: flex-end;
+		justify-content: flex-start;
 		gap: 0.5rem;
 		padding-top: 0;
-		justify-self: end;
+		align-items: center;
 	}
 
 	.user-admin-actions .btn {
@@ -912,7 +907,7 @@
 
 	.user-table th {
 		padding: 8px 10px;
-		text-align: left;
+		text-align: center;
 		color: var(--text-secondary);
 		font-weight: 600;
 		font-size: 0.75rem;
@@ -990,6 +985,12 @@
 		font-style: italic;
 	}
 
+	.user-table .admin-cell,
+	.user-table .telegram-cell,
+	.user-table .actions-cell {
+		text-align: center;
+	}
+
 	.user-table .time-date,
 	.user-table .time-time {
 		display: block;
@@ -1002,6 +1003,7 @@
 	.user-actions {
 		display: inline-flex;
 		align-items: center;
+		justify-content: center;
 		gap: 0.5rem;
 		flex-wrap: wrap;
 	}
@@ -4203,13 +4205,10 @@
 								placeholder='Telegram User ID (optional)'>
 						</div>
 						<div class='user-admin-inline'>
-							<div class='user-admin-field'>
-								<label for='new-is-admin'>Admin</label>
-								<label class='user-admin-checkbox' for='new-is-admin'>
-									<input type='checkbox' id='new-is-admin' aria-label='Admin'>
-									<span>Admin</span>
-								</label>
-							</div>
+							<label class='user-admin-checkbox' for='new-is-admin'>
+								<input type='checkbox' id='new-is-admin' aria-label='Admin'>
+								<span>Admin</span>
+							</label>
 							<div class='user-admin-actions'>
 								<button type='submit' class='btn btn-primary'>Create User</button>
 							</div>
@@ -4220,11 +4219,11 @@
 							<table id='user-table' class='user-table' aria-label='User list'>
 								<thead>
 									<tr>
-										<th>Username</th>
-										<th>Admin</th>
-										<th>Telegram</th>
-										<th>Created</th>
-										<th>Actions</th>
+										<th class='username-col'>Username</th>
+										<th class='admin-col'>Admin</th>
+										<th class='telegram-col'>Telegram</th>
+										<th class='created-col'>Created</th>
+										<th class='actions-col'>Actions</th>
 									</tr>
 								</thead>
 								<tbody id='user-table-body'></tbody>
@@ -7966,10 +7965,10 @@
 			return `
 				<tr data-user-id="${user.id}">
 					<td>${user.username}</td>
-					<td class="nowrap-cell">${user.is_admin ? yesLabel : noLabel}</td>
+					<td class="nowrap-cell admin-cell">${user.is_admin ? yesLabel : noLabel}</td>
 					<td class="telegram-cell" data-empty="${telegram === '-' ? 'true' : 'false'}">${telegram}</td>
 					<td class="time-cell">${createdCell}</td>
-					<td>
+					<td class="actions-cell">
 						<div class="user-actions" role="group" aria-label="${translateMessage('Actions')}">
 							<button class="user-action btn-accent" data-action="toggle-admin" data-next="${user.is_admin ? 'false' : 'true'}" title="${adminToggleTitle}">${adminToggleText}</button>
 							<button class="user-action" data-action="reset-password">${resetPasswordLabel}</button>
