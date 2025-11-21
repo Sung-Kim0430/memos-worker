@@ -117,6 +117,7 @@ export async function handleNotesList(request, env, session) {
 						startMs > 0 && endMs > 0 &&
 						startMs < endMs &&
 						endMs <= now &&
+						startMs >= now - MAX_TIME_RANGE_MS &&
 						(endMs - startMs) <= MAX_TIME_RANGE_MS
 					) {
 						whereClauses.push("updated_at >= ? AND updated_at < ?");

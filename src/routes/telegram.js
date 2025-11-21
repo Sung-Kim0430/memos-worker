@@ -24,6 +24,34 @@ function normalizeFileName(name) {
 	return safe.length > MAX_FILENAME_LENGTH ? safe.slice(0, MAX_FILENAME_LENGTH) : safe;
 }
 
+function parseIp(ip) {
+	const parts = (ip || '').split('.').map(p => parseInt(p, 10));
+	if (parts.length !== 4 || parts.some(p => Number.isNaN(p) || p < 0 || p > 255)) return null;
+	return ((parts[0] << 24) >>> 0) + (parts[1] << 16) + (parts[2] << 8) + parts[3];
+}
+
+function isIpAllowed(ip, allowlist) {
+	if (!allowlist || allowlist.length === 0) return true;
+	const ipNum = parseIp(ip);
+	if (ipNum === null) return false;
+	for (const entry of allowlist) {
+		if (!entry) continue;
+		const trimmed = entry.trim();
+		if (!trimmed) continue;
+		if (!trimmed.includes('/')) {
+			if (trimmed === ip) return true;
+			continue;
+		}
+		const [cidrIp, maskBitsStr] = trimmed.split('/');
+		const baseNum = parseIp(cidrIp);
+		const maskBits = parseInt(maskBitsStr, 10);
+		if (baseNum === null || Number.isNaN(maskBits) || maskBits < 0 || maskBits > 32) continue;
+		const mask = maskBits === 0 ? 0 : (~0 << (32 - maskBits)) >>> 0;
+		if ((ipNum & mask) === (baseNum & mask)) return true;
+	}
+	return false;
+}
+
 async function createTelegramProxyMapping(env, fileId, mediaType, mimeType = null) {
 	const proxyId = crypto.randomUUID();
 	await env.NOTES_KV.put(`${TG_PROXY_PREFIX}${proxyId}`, JSON.stringify({ fileId, mediaType, mimeType }), { expirationTtl: TELEGRAM_PROXY_TTL_SECONDS });
@@ -470,6 +498,11 @@ export async function handleTelegramWebhook(request, env, secret, ctx) {
 		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
 	}
 	if (headerToken && headerToken !== env.TELEGRAM_WEBHOOK_SECRET) {
+		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+	}
+	const ip = request.headers.get('cf-connecting-ip') || (request.headers.get('x-forwarded-for') || '').split(',')[0].trim();
+	const allowlist = (env.TELEGRAM_IP_WHITELIST || '').split(',').map(v => v.trim()).filter(Boolean);
+	if (!isIpAllowed(ip, allowlist)) {
 		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
 	}
 	if (ctx) {

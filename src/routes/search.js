@@ -6,8 +6,8 @@ import { handleNotesList } from './notes.js';
 
 function sanitizeFtsQuery(raw) {
 	if (!raw) return '';
-	// 移除会导致 FTS 语法错误的特殊字符，保留常见文字、数字、下划线及连字符
-	const cleaned = raw.replace(/["'()<>]/g, ' ').replace(/[^\p{L}\p{N}_\s-]/gu, ' ').trim();
+	// 仅允许字母、数字、空格、下划线、连字符
+	const cleaned = raw.replace(/[^\p{L}\p{N}_\s-]/gu, ' ').trim();
 	return cleaned.split(/\s+/).filter(Boolean).join(' ');
 }
 
@@ -43,6 +43,9 @@ export async function handleSearchRequest(request, env, session) {
 		return errorResponse('INVALID_PAGE', 'Page out of range', 400);
 	}
 	const offset = (page - 1) * NOTES_PER_PAGE;
+	if (offset > MAX_PAGE * NOTES_PER_PAGE) {
+		return errorResponse('INVALID_PAGE', 'Page out of range', 400);
+	}
 	const limit = NOTES_PER_PAGE;
 	const tagName = searchParams.get('tag');
 	const startTimestamp = searchParams.get('startTimestamp');
@@ -80,6 +83,7 @@ export async function handleSearchRequest(request, env, session) {
 				startMs > 0 && endMs > 0 &&
 				startMs < endMs &&
 				endMs <= now &&
+				startMs >= now - MAX_TIME_RANGE_MS &&
 				(endMs - startMs) <= MAX_TIME_RANGE_MS
 			) {
 				whereClauses.push("n.updated_at >= ? AND n.updated_at < ?");

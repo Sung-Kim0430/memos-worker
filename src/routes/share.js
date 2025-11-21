@@ -55,6 +55,21 @@ async function cleanupPublicFilesForShare(env, shareId) {
 	}
 }
 
+function fileExistsInNote(note, fileId) {
+	if (!note) return false;
+	let files = [];
+	try {
+		if (typeof note.files === 'string') {
+			files = JSON.parse(note.files);
+		} else if (Array.isArray(note.files)) {
+			files = note.files;
+		}
+	} catch (e) {
+		files = [];
+	}
+	return Array.isArray(files) && files.some(f => f?.id === fileId);
+}
+
 export async function handleShareFileRequest(noteId, fileId, request, env, session) {
 	const authError = requireSession(session);
 	if (authError) {
@@ -343,7 +358,7 @@ export async function handlePublicNoteRequest(publicId, env) {
 				if (fileMatch) {
 					const targetNoteId = parseInt(fileMatch[1]);
 					// 仅允许当前正在分享的笔记内部的文件生成公开链接，避免跨笔记 IDOR
-					if (Number.isFinite(targetNoteId) && targetNoteId === note.id) {
+					if (Number.isFinite(targetNoteId) && targetNoteId === note.id && fileExistsInNote(note, fileMatch[2])) {
 						kvPayload = { noteId: targetNoteId, fileId: fileMatch[2], fileName: 'media' };
 					}
 				} else if (imageMatch) {
