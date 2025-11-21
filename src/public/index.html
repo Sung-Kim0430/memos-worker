@@ -2701,14 +2701,15 @@
 		}
 
 		.setting-item {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.5rem;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 0.5rem 0.75rem;
 			padding-left: 0;
 		}
 
 		.setting-item label {
-			width: 100%;
+			flex: 1 1 55%;
+			min-width: 140px;
 		}
 
 		.setting-item input[type="text"],
@@ -2719,19 +2720,25 @@
 		.setting-item .user-select,
 		.setting-item .setting-buttons-group,
 		.setting-item .hex-input-wrapper {
-			width: 100%;
-			max-width: 100%;
+			flex: 0 0 auto;
+			max-width: min(240px, 45vw);
+			width: auto;
 		}
 
 		.setting-item .toggle-switch,
 		.setting-item input[type="checkbox"],
 		.setting-item input[type="radio"] {
-			align-self: flex-start;
+			margin-left: auto;
 		}
 
 		#imgur-client-id-wrapper {
-			flex-direction: column;
-			align-items: flex-start;
+			flex-wrap: wrap;
+			align-items: center;
+		}
+
+		#settings-language-select,
+		.language-select {
+			max-width: min(220px, 45vw);
 		}
 	}
 
@@ -4574,7 +4581,7 @@
 				themeColor: 'Theme Color',
 				logout: 'Logout',
 				getPublicLink: 'Get public link',
-				languageLabel: 'Language',
+				languageLabel: 'UI Language',
 				languageFollowSystem: 'Follow system',
 				languageChinese: '中文',
 				languageEnglish: 'English',
@@ -4654,7 +4661,7 @@
 				themeColor: '主题色',
 				logout: '退出登录',
 				getPublicLink: '获取公开链接',
-				languageLabel: '语言',
+				languageLabel: '界面语言',
 				languageFollowSystem: '跟随系统',
 				languageChinese: '中文',
 				languageEnglish: 'English',
