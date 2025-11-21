@@ -4,6 +4,9 @@ import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, requireSession } from '../utils/authz.js';
 import { handleNotesList } from './notes.js';
 
+const TAGS_CACHE = new Map(); // key -> { expires, data }
+const TAGS_CACHE_TTL_MS = 30 * 1000;
+
 function sanitizeFtsQuery(raw) {
 	if (!raw) return '';
 	// 仅允许字母、数字、空格、下划线、连字符
@@ -145,6 +148,11 @@ export async function handleTagsList(request, env, session) {
 	}
 	const db = env.DB;
 	try {
+		const cacheKey = session?.isAdmin ? 'tags:admin' : `tags:${session?.id || 'anon'}`;
+		const cached = TAGS_CACHE.get(cacheKey);
+		if (cached && cached.expires > Date.now()) {
+			return jsonResponse(cached.data);
+		}
 		// 使用 LEFT JOIN 和 COUNT 来统计每个标签关联的笔记数量
 		// ORDER BY count DESC, name ASC 实现了按数量降序、名称升序的排序
 		const access = buildAccessCondition(session, 'n');
@@ -160,6 +168,7 @@ export async function handleTagsList(request, env, session) {
             ORDER BY count DESC, t.name ASC
         `);
 		const { results } = await stmt.bind(...access.bindings).all();
+		TAGS_CACHE.set(cacheKey, { expires: Date.now() + TAGS_CACHE_TTL_MS, data: results });
 		return jsonResponse(results);
 	} catch (e) {
 		console.error("Tags List Error:", e);

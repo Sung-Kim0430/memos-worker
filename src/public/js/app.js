@@ -690,8 +690,14 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	const defaultSettings = DEFAULT_UI_SETTINGS;
 	let settings = { ...DEFAULT_UI_SETTINGS };
 	let settingsLoaded = false;
+	const SETTINGS_CACHE_TTL = 30_000;
+	let settingsCacheTs = 0;
 
 	async function loadSettings() {
+		const now = Date.now();
+		if (settingsLoaded && now - settingsCacheTs < SETTINGS_CACHE_TTL) {
+			return true;
+		}
 		settingsLoaded = false;
 		try {
 			const response = await fetch('/api/settings');
@@ -701,6 +707,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 			const incoming = await response.json();
 			settings = { ...defaultSettings, ...incoming };
 			settingsLoaded = true;
+			settingsCacheTs = Date.now();
 			return true;
 		} catch (error) {
 			console.error("Could not load settings:", error);
@@ -721,6 +728,7 @@ function renderVisibilityOptions(selectEl, currentValue) {
 				body: JSON.stringify(settings)
 			});
 			if (!response.ok) throw new Error('Failed to save settings to server');
+			settingsCacheTs = Date.now();
 		} catch (error) {
 			console.error("Could not save settings:", error);
 			showCustomAlert(`Error saving settings: ${error.message}`, 'error');
@@ -1717,38 +1725,67 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		}, 200);
 
 		try {
-			const response = await fetch('/api/notes?page=1');
-			if (response.ok) {
-				const data = await response.json();
-				const loaded = await loadSettings();
-				// 显示应用主界面
-				showAppScreen();
-				if (loaded) {
+			const notesPromise = fetch('/api/notes?page=1');
+			const settingsPromise = fetch('/api/settings').catch(() => null);
+			const usersPromise = fetch('/api/users').catch(() => null);
+
+			const notesResponse = await notesPromise;
+			if (notesResponse.status === 401) {
+				showLoginScreen();
+				return;
+			}
+			if (!notesResponse.ok) {
+				throw new Error(`Server check failed with status: ${notesResponse.status}`);
+			}
+
+			const [notesData, settingsResponse, usersResponse] = await Promise.all([
+				notesResponse.json(),
+				settingsPromise,
+				usersPromise
+			]);
+
+			// 提前应用设置（如果获取成功）
+			if (settingsResponse && settingsResponse.ok) {
+				const incoming = await settingsResponse.json();
+				settings = { ...defaultSettings, ...incoming };
+				settingsLoaded = true;
+				settingsCacheTs = Date.now();
+				applySettings();
+				await updateSettingsModalControls();
+			} else {
+				await loadSettings();
+				if (settingsLoaded) {
 					applySettings();
 					await updateSettingsModalControls();
 				}
-				await loadUsersIfAdmin();
-				allNotesCache = data.notes;
-				renderNotes(data.notes);
-				appState.pagination.hasMore = data.hasMore;
-				appState.pagination.currentPage = 1;
+			}
 
-				// 处理加载更多的UI
-				if (!data.hasMore) {
-					if (allNotesCache.length > 0) {
-						scrollLoader.textContent = t('noMoreNotes');
-						scrollLoader.style.display = 'block';
-					} else {
-						notesContainer.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">${t('nothingHere')}</div>`;
-						scrollLoader.style.display = 'none';
-					}
-				}
-			} else if (response.status === 401) {
-				// 如果 session 无效或不存在，显示登录界面
-				showLoginScreen();
+			// 用户列表（仅管理员可见）
+			if (usersResponse && usersResponse.ok) {
+				const data = await usersResponse.json();
+				currentUser.isAdmin = true;
+				if (userManagementSection) userManagementSection.style.display = '';
+				renderUserTable(data.users || []);
 			} else {
-				// 处理其他网络或服务器错误
-				throw new Error(`Server check failed with status: ${response.status}`);
+				await loadUsersIfAdmin();
+			}
+
+			// 显示应用主界面
+			showAppScreen();
+			allNotesCache = notesData.notes;
+			renderNotes(notesData.notes);
+			appState.pagination.hasMore = notesData.hasMore;
+			appState.pagination.currentPage = 1;
+
+			// 处理加载更多的UI
+			if (!notesData.hasMore) {
+				if (allNotesCache.length > 0) {
+					scrollLoader.textContent = t('noMoreNotes');
+					scrollLoader.style.display = 'block';
+				} else {
+					notesContainer.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 1rem 0;">${t('nothingHere')}</div>`;
+					scrollLoader.style.display = 'none';
+				}
 			}
 		} catch (error) {
 			console.error('Initialization failed:', error);
@@ -3805,6 +3842,8 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	});
 
 	let allTagsCache = [];
+	let tagsCacheTs = 0;
+	const TAGS_CACHE_TTL = 30_000;
 	let isTagDropdownOpen = false;
 	// 渲染标签列表到下拉框
 	function renderTagList(filter = '') {
@@ -3836,11 +3875,13 @@ function renderVisibilityOptions(selectEl, currentValue) {
 		tagDropdown.style.display = 'block';
 		isTagDropdownOpen = true;
 		tagSearchInput.focus();
-		if (allTagsCache.length === 0) {
+		const now = Date.now();
+		if (allTagsCache.length === 0 || now - tagsCacheTs > TAGS_CACHE_TTL) {
 			try {
 				const response = await fetch('/api/tags');
 				if (!response.ok) throw new Error('Failed to fetch tags');
 				allTagsCache = await response.json();
+				tagsCacheTs = Date.now();
 			} catch (error) {
 				console.error(error);
 				allTagsCache = []; // 出错时清空
@@ -5323,9 +5364,15 @@ function renderVisibilityOptions(selectEl, currentValue) {
 	async function loadAndRenderTags() {
 		const tagsContainer = document.getElementById('tags-container');
 		try {
-			const response = await fetch('/api/tags');
-			if (!response.ok) throw new Error('Failed to fetch tags');
-			const tags = await response.json();
+			const now = Date.now();
+			let tags = allTagsCache;
+			if (tags.length === 0 || now - tagsCacheTs > TAGS_CACHE_TTL) {
+				const response = await fetch('/api/tags');
+				if (!response.ok) throw new Error('Failed to fetch tags');
+				tags = await response.json();
+				allTagsCache = tags;
+				tagsCacheTs = Date.now();
+			}
 
 			tagsContainer.innerHTML = '<ul></ul>';
 			const listElement = tagsContainer.querySelector('ul');
