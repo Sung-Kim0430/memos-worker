@@ -268,12 +268,17 @@ export async function handleShareNoteRequest(noteId, request, env, session) {
 
 		} else {
 			// --- 创建或获取新链接 ---
+			let expirationTtl = SHARE_DEFAULT_TTL_SECONDS;
+			if (Object.prototype.hasOwnProperty.call(body, 'expirationTtl')) {
+				if (typeof body.expirationTtl !== 'number' || !Number.isFinite(body.expirationTtl) || body.expirationTtl < 0) {
+					return errorResponse('INVALID_INPUT', 'expirationTtl is required and must be a non-negative number', 400);
+				}
+				expirationTtl = body.expirationTtl;
+			}
 			let publicId = await env.NOTES_KV.get(`note_share:${parsedNoteId}`);
 
 			if (!publicId) {
 				publicId = crypto.randomUUID();
-				// 默认过期时间为 1 小时 (3600 秒)
-				const expirationTtl = (body.expirationTtl !== undefined) ? body.expirationTtl : SHARE_DEFAULT_TTL_SECONDS;
 				const options = {};
 				if (expirationTtl > 0) {
 					options.expirationTtl = expirationTtl;

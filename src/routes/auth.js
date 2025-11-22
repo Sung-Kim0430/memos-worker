@@ -308,12 +308,13 @@ export async function handleRegister(request, env, session) {
 		}
 
 		const tgId = telegram_user_id ? telegram_user_id.toString() : null;
-		if (tgId) {
-			const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(tgId).first();
-			if (dup) {
-				return errorResponse('TELEGRAM_ID_CONFLICT', 'Telegram user id already bound.', 400);
-			}
+	if (tgId) {
+		const dup = await env.DB.prepare("SELECT id FROM users WHERE telegram_user_id = ?").bind(tgId).first();
+		if (dup) {
+			try { await db.prepare("ROLLBACK").run(); } catch (_) { /* ignore */ }
+			return errorResponse('TELEGRAM_ID_CONFLICT', 'Telegram user id already bound.', 400);
 		}
+	}
 
 		const { hash, salt } = await hashPassword(password);
 		const now = Date.now();

@@ -62,22 +62,25 @@ export async function handleTimelineRequest(request, env, session) {
 		const minTimestamp = Math.max(0, Date.now() - MAX_TIME_RANGE_MS);
 		const access = buildAccessCondition(session, null); // 时间线同样使用无别名条件
 		const stmt = db.prepare(`
-			SELECT
-				CAST(strftime('%Y', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS year,
-				CAST(strftime('%m', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS month,
-				CAST(strftime('%d', datetime(updated_at / 1000, 'unixepoch')) AS INTEGER) AS day,
-				COUNT(*) as count
-			FROM notes
+			SELECT updated_at FROM notes
 			WHERE ${access.clause} AND updated_at >= ?
-			GROUP BY year, month, day
-			ORDER BY year DESC, month DESC, day DESC
 		`);
 		const { results } = await stmt.bind(...access.bindings, minTimestamp).all();
+		const formatter = new Intl.DateTimeFormat('en-US', {
+			timeZone: timezone,
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+		});
 		const timeline = {};
 		for (const row of results || []) {
-			const year = row.year;
-			const month = row.month;
-			const day = row.day;
+			const ts = Number(row.updated_at);
+			if (!Number.isFinite(ts)) continue;
+			const parts = formatter.formatToParts(new Date(ts));
+			const year = parseInt(parts.find(p => p.type === 'year')?.value || '', 10);
+			const month = parseInt(parts.find(p => p.type === 'month')?.value || '', 10);
+			const day = parseInt(parts.find(p => p.type === 'day')?.value || '', 10);
+			if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) continue;
 			if (!timeline[year]) {
 				timeline[year] = { count: 0, months: {} };
 			}
@@ -87,9 +90,9 @@ export async function handleTimelineRequest(request, env, session) {
 			if (!timeline[year].months[month].days[day]) {
 				timeline[year].months[month].days[day] = { count: 0 };
 			}
-			timeline[year].count += row.count;
-			timeline[year].months[month].count += row.count;
-			timeline[year].months[month].days[day].count += row.count;
+			timeline[year].count += 1;
+			timeline[year].months[month].count += 1;
+			timeline[year].months[month].days[day].count += 1;
 		}
 		return jsonResponse(timeline);
 	} catch (e) {

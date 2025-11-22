@@ -187,6 +187,20 @@ export async function handleNotesList(request, env, session) {
 			case 'POST': {
 					const uploadedKeys = [];
 					let createdNoteId = null;
+					const cleanupAndReturn = async (response) => {
+						if (uploadedKeys.length > 0) {
+							try { await env.NOTES_R2_BUCKET.delete(uploadedKeys); } catch (cleanupErr) { console.error("Cleanup uploaded files failed:", cleanupErr); }
+						}
+						if (createdNoteId) {
+							try {
+								await db.prepare("DELETE FROM note_tags WHERE note_id = ?").bind(createdNoteId).run();
+								await db.prepare("DELETE FROM notes WHERE id = ?").bind(createdNoteId).run();
+							} catch (cleanupErr) {
+								console.error("Cleanup created note failed:", cleanupErr);
+							}
+						}
+						return response;
+					};
 				try {
 					const formData = await request.formData();
 					const content = formData.get('content')?.toString() || '';
@@ -231,18 +245,18 @@ export async function handleNotesList(request, env, session) {
 						throw new Error("Failed to create note and get ID.");
 					}
 				// --- 【重要逻辑调整】现在上传的文件，只有非图片类型才算作 "附件" (files) ---
-					for (const file of files) {
-						if (file.size > MAX_UPLOAD_BYTES) {
-							return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
-						}
-						const validation = await readAndValidateFile(file);
-						if (!validation.ok) {
-							return errorResponse(validation.reason, 'Unsupported file type.', 415);
-						}
-						const mime = validation.mime || file.type;
-						// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
-						if (file.name && file.size > 0 && !mime.startsWith('image/')) {
-							const fileId = crypto.randomUUID();
+						for (const file of files) {
+							if (file.size > MAX_UPLOAD_BYTES) {
+								return cleanupAndReturn(errorResponse('FILE_TOO_LARGE', 'File too large.', 413));
+							}
+							const validation = await readAndValidateFile(file);
+							if (!validation.ok) {
+								return cleanupAndReturn(errorResponse(validation.reason, 'Unsupported file type.', 415));
+							}
+							const mime = validation.mime || file.type;
+							// 只有当文件存在，并且 MIME 类型不是图片时，才将其添加到 filesMeta
+							if (file.name && file.size > 0 && !mime.startsWith('image/')) {
+								const fileId = crypto.randomUUID();
 							const objectKey = `${noteId}/${fileId}`;
 						await env.NOTES_R2_BUCKET.put(objectKey, validation.buffer, { httpMetadata: { contentType: mime } });
 						uploadedKeys.push(objectKey);
