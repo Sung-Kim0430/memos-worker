@@ -43,6 +43,32 @@ async function cachePublicFile(env, shareId, privateUrl, kvPayload, ttlSeconds) 
 	return newPublicId;
 }
 
+function buildPublicFileKvOptions(ttlSeconds = SHARE_DEFAULT_TTL_SECONDS) {
+	if (Number.isFinite(ttlSeconds) && ttlSeconds > 0) {
+		return { expirationTtl: ttlSeconds };
+	}
+	return {};
+}
+
+async function resolveNoteShareTtl(env, noteId) {
+	try {
+		const shareId = await env.NOTES_KV.get(`note_share:${noteId}`);
+		if (!shareId) return null;
+		const ttl = await getShareTtlSeconds(env, shareId);
+		return Number.isFinite(ttl) && ttl > 0 ? ttl : null;
+	} catch (_e) {
+		return null;
+	}
+}
+
+export async function cleanupPublicFileLinks(env, publicIds = []) {
+	const ids = (publicIds || []).filter(Boolean);
+	if (ids.length === 0) return;
+	await Promise.all(ids.map(id => env.NOTES_KV.delete(`public_file:${id}`).catch(err => {
+		console.error("Failed to cleanup public_file link:", id, err);
+	})));
+}
+
 async function cleanupPublicFilesForShare(env, shareId) {
 	const prefix = `public_file_cache:${shareId}:`;
 	const list = await env.NOTES_KV.list({ prefix });
@@ -102,23 +128,33 @@ export async function handleShareFileRequest(noteId, fileId, request, env, sessi
 			return errorResponse('FILE_NOT_FOUND', 'File not found in this note', 404);
 		}
 
-		const file = files[fileIndex];
-		let publicId = file.public_id;
+	const file = files[fileIndex];
+	let publicId = file.public_id;
+	const ttlSeconds = (await resolveNoteShareTtl(env, id)) ?? SHARE_DEFAULT_TTL_SECONDS;
+	const kvOptions = buildPublicFileKvOptions(ttlSeconds);
 
-		if (!publicId) {
-			publicId = crypto.randomUUID();
-			// 1. 在 KV 中存储映射关系，用于快速、免认证的查找
-			await env.NOTES_KV.put(`public_file:${publicId}`, JSON.stringify({
-				noteId: id,
-				fileId: file.id,
-				fileName: file.name,
-				contentType: file.type
-			}));
+	if (!publicId) {
+		publicId = crypto.randomUUID();
+		// 1. 在 KV 中存储映射关系，用于快速、免认证的查找
+		await env.NOTES_KV.put(`public_file:${publicId}`, JSON.stringify({
+			noteId: id,
+			fileId: file.id,
+			fileName: file.name,
+			contentType: file.type
+		}), kvOptions);
 
-			// 2. 将 public_id 持久化到 D1 数据库中
-			files[fileIndex].public_id = publicId;
-			await db.prepare("UPDATE notes SET files = ? WHERE id = ?").bind(JSON.stringify(files), id).run();
-		}
+		// 2. 将 public_id 持久化到 D1 数据库中
+		files[fileIndex].public_id = publicId;
+		await db.prepare("UPDATE notes SET files = ? WHERE id = ?").bind(JSON.stringify(files), id).run();
+	} else if (kvOptions.expirationTtl) {
+		// 刷新已有链接，避免永久存活
+		await env.NOTES_KV.put(`public_file:${publicId}`, JSON.stringify({
+			noteId: id,
+			fileId: file.id,
+			fileName: file.name,
+			contentType: file.type
+		}), kvOptions);
+	}
 
 		const { protocol, host } = new URL(request.url);
 		const publicUrl = `${protocol}//${host}/api/public/file/${publicId}`;

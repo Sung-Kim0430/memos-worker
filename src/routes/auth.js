@@ -184,7 +184,7 @@ export function validateCsrf(request, session) {
 	return null;
 }
 
-export async function isSessionAuthenticated(request, env) {
+export async function isSessionAuthenticated(request, env, ctx) {
 	const cookieHeader = request.headers.get('Cookie');
 	const sessionId = parseSessionIdFromCookie(cookieHeader);
 	if (!sessionId) return null;
@@ -215,9 +215,15 @@ export async function isSessionAuthenticated(request, env) {
 			: (Number.isFinite(kvExpirationSeconds) ? kvExpirationSeconds - Math.floor(Date.now() / 1000) : null);
 		if (secondsLeft === null || secondsLeft <= SESSION_DURATION_SECONDS * 0.25) {
 			// 异步续期，尽量不阻塞请求
-			request?.cf?.ctx?.waitUntil?.(
-				env.NOTES_KV.put(sessionKey, JSON.stringify(session), buildSessionKvOptions())
-			);
+			const waiter = ctx?.waitUntil ?? request?.cf?.ctx?.waitUntil;
+			if (typeof waiter === 'function') {
+				waiter(
+					env.NOTES_KV.put(sessionKey, JSON.stringify(session), buildSessionKvOptions())
+				);
+			} else {
+				// 回退同步续期，确保不会静态过期
+				await env.NOTES_KV.put(sessionKey, JSON.stringify(session), buildSessionKvOptions());
+			}
 		}
 	} catch (e) {
 		console.error("Failed to extend session TTL:", e);

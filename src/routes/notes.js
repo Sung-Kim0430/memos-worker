@@ -3,6 +3,7 @@ import { detectMimeType, extractImageUrls, extractVideoUrls, sanitizeContent } f
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { buildAccessCondition, canAccessNote, canModifyNote, requireSession } from '../utils/authz.js';
 import { cleanupUnusedTags, processNoteTags } from '../utils/tags.js';
+import { cleanupPublicFileLinks } from './share.js';
 
 function escapeRegex(str) {
 	return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -356,17 +357,18 @@ export async function handleNoteDetail(request, noteId, env, session) {
 					return errorResponse('FORBIDDEN', 'Forbidden', 403);
 				}
 				try {
-				const originalUpdatedAt = existingNote.updated_at;
-				let lastKnownUpdatedAt = originalUpdatedAt;
-				const formData = await request.formData();
-						const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
-				const pendingR2Deletions = [];
-				const newUploads = [];
-				const bucket = env.NOTES_R2_BUCKET;
+					const originalUpdatedAt = existingNote.updated_at;
+					let lastKnownUpdatedAt = originalUpdatedAt;
+					const formData = await request.formData();
+							const shouldUpdateTimestamp = formData.get('update_timestamp') !== 'false';
+					const pendingR2Deletions = [];
+					const newUploads = [];
+					const publicFileIdsToDelete = [];
+					const bucket = env.NOTES_R2_BUCKET;
 
-					if (formData.has('content')) {
-						const content = formData.get('content')?.toString() ?? existingNote.content;
-						if (content.length > MAX_NOTE_CONTENT_LENGTH) {
+						if (formData.has('content')) {
+							const content = formData.get('content')?.toString() ?? existingNote.content;
+							if (content.length > MAX_NOTE_CONTENT_LENGTH) {
 							return errorResponse('CONTENT_TOO_LONG', 'Content is too long.', 413);
 						}
 						let currentFiles = Array.isArray(existingNote.files) ? [...existingNote.files] : [];
@@ -382,11 +384,17 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						if (!Array.isArray(filesToDelete) || !filesToDelete.every(id => typeof id === 'string')) {
 							return errorResponse('INVALID_INPUT', 'filesToDelete must be an array of string ids', 400);
 						}
-						if (filesToDelete.length > 0) {
-							const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
-							pendingR2Deletions.push(...r2KeysToDelete);
-							currentFiles = currentFiles.filter(file => !filesToDelete.includes(file.id));
-						}
+							if (filesToDelete.length > 0) {
+								const r2KeysToDelete = filesToDelete.map(fileId => `${id}/${fileId}`);
+								pendingR2Deletions.push(...r2KeysToDelete);
+								filesToDelete.forEach(fileId => {
+									const match = existingNote.files.find(f => f.id === fileId && f.public_id);
+									if (match?.public_id) {
+										publicFileIdsToDelete.push(match.public_id);
+									}
+								});
+								currentFiles = currentFiles.filter(file => !filesToDelete.includes(file.id));
+							}
 
 						// 解析新的图片/视频集合，用于后续更新及空内容判断
 						const picUrls = extractImageUrls(content);
@@ -412,11 +420,11 @@ export async function handleNoteDetail(request, noteId, env, session) {
 								if (fileMatch) return `${id}/${fileMatch[1]}`;
 								return null;
 							}).filter(Boolean);
-							const allR2Keys = [...attachmentKeys, ...picKeys, ...videoKeys];
+								const allR2Keys = [...attachmentKeys, ...picKeys, ...videoKeys];
 
-							const deleteResult = await db.prepare("DELETE FROM notes WHERE id = ? AND updated_at = ?").bind(id, originalUpdatedAt).run();
-							if (!deleteResult.meta?.changes) {
-								return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
+								const deleteResult = await db.prepare("DELETE FROM notes WHERE id = ? AND updated_at = ?").bind(id, originalUpdatedAt).run();
+								if (!deleteResult.meta?.changes) {
+									return errorResponse('CONFLICT', 'Conflict: note was modified, please retry.', 409);
 							}
 							// 删除分享 KV 和缓存
 							const publicId = await env.NOTES_KV.get(`note_share:${id}`);
@@ -436,14 +444,18 @@ export async function handleNoteDetail(request, noteId, env, session) {
 								await env.NOTES_KV.delete(`note_share:${id}`);
 							}
 
-							if (allR2Keys.length > 0) {
-								await bucket.delete(allR2Keys);
+								if (allR2Keys.length > 0) {
+									await bucket.delete(allR2Keys);
+								}
+								const publicIds = existingNote.files.map(file => file?.public_id).filter(Boolean);
+								if (publicIds.length > 0) {
+									await cleanupPublicFileLinks(env, publicIds);
+								}
+								await cleanupUnusedTags(db);
+								// 返回特殊标记，告知前端整个笔记已被删除
+								return jsonResponse({ success: true, noteDeleted: true });
 							}
-							await cleanupUnusedTags(db);
-							// 返回特殊标记，告知前端整个笔记已被删除
-							return jsonResponse({ success: true, noteDeleted: true });
-						}
-					// 处理新附件上传
+						// 处理新附件上传
 					const newFiles = formData.getAll('file');
 					for (const file of newFiles) {
 						// 只有当文件存在，并且不是图片时，才作为附件处理
@@ -491,6 +503,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						lastKnownUpdatedAt = newTimestamp;
 						if (pendingR2Deletions.length > 0) {
 							await bucket.delete(pendingR2Deletions);
+						}
+						if (publicFileIdsToDelete.length > 0) {
+							await cleanupPublicFileLinks(env, publicFileIdsToDelete);
 						}
 				}
 
@@ -555,6 +570,7 @@ export async function handleNoteDetail(request, noteId, env, session) {
 						return errorResponse('FORBIDDEN', 'Forbidden', 403);
 					}
 					let allR2KeysToDelete = [];
+				const publicFileIds = (existingNote.files || []).map(file => file?.public_id).filter(Boolean);
 
 				if (existingNote.files && existingNote.files.length > 0) {
 					const attachmentKeys = existingNote.files
@@ -627,6 +643,9 @@ export async function handleNoteDetail(request, noteId, env, session) {
 				}
 
 				await db.prepare("DELETE FROM notes WHERE id = ?").bind(id).run();
+				if (publicFileIds.length > 0) {
+					await cleanupPublicFileLinks(env, publicFileIds);
+				}
 				await cleanupUnusedTags(db);
 
 				return new Response(null, { status: 204 });

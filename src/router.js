@@ -194,7 +194,7 @@ export async function handleApiRequest(request, env, ctx) {
 		return publicResponse;
 	}
 
-	const session = await isSessionAuthenticated(request, env);
+	const session = await isSessionAuthenticated(request, env, ctx);
 	if (!session) {
 		return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
 	}
