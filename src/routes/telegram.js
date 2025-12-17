@@ -172,6 +172,9 @@ export async function handleTelegramProxy(request, env, session) {
 	if (authError) {
 		return authError;
 	}
+	if (!['GET', 'HEAD'].includes(request.method.toUpperCase())) {
+		return errorResponse('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+	}
 	const { pathname } = new URL(request.url);
 	const match = pathname.match(/^\/api\/tg-media-proxy\/([^\/]+)$/);
 
@@ -193,27 +196,60 @@ export async function handleTelegramProxy(request, env, session) {
 	}
 
 	try {
-		// 1. 调用 getFile API
-			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`;
-			const fileInfoRes = await fetch(getFileUrl);
-			const fileInfo = await fileInfoRes.json();
-
-			if (!fileInfo.ok) {
-				console.error(`Telegram getFile API error for file_id ${fileId}:`, fileInfo.description, fileInfo);
-				return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
-			}
-
-		// 2. 构建临时的下载链接
-		const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-
-			// 3. 返回 302 重定向
-			return Response.redirect(temporaryDownloadUrl, 302);
-
-		} catch (e) {
-			console.error("Telegram Proxy Error:", e);
-			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
+		// 1) 调用 getFile API（注意：不能把 bot token 暴露给客户端）
+		const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(fileId)}`;
+		const fileInfoRes = await fetch(getFileUrl);
+		let fileInfo;
+		try {
+			fileInfo = await fileInfoRes.json();
+		} catch (parseErr) {
+			console.error("Telegram getFile API returned non-JSON response:", parseErr);
+			return errorResponse('TELEGRAM_API_ERROR', 'Telegram API error', 502);
 		}
+
+		if (!fileInfo?.ok) {
+			console.error(`Telegram getFile API error for file_id ${fileId}:`, fileInfo?.description, fileInfo);
+			return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo?.description || 'Unknown error'}`, 502);
+		}
+
+		const filePath = fileInfo?.result?.file_path;
+		const fileSize = Number(fileInfo?.result?.file_size);
+		if (!filePath) {
+			return errorResponse('TELEGRAM_API_ERROR', 'Telegram API returned invalid file info', 502);
+		}
+		if (Number.isFinite(fileSize) && fileSize > MAX_UPLOAD_BYTES) {
+			return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
+		}
+
+		// 2) 服务端拉取文件内容并回传，避免泄露 bot token（不要 302 跳转）
+		const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+		const fileRes = await fetch(downloadUrl, { method: request.method });
+		if (!fileRes.ok) {
+			console.error("Telegram file download failed:", fileRes.status, fileRes.statusText);
+			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 502);
+		}
+
+		const contentType = fileRes.headers.get('content-type') || mapping?.mimeType || 'application/octet-stream';
+		const headers = new Headers();
+		headers.set('Content-Type', contentType);
+		const contentLength = fileRes.headers.get('content-length');
+		if (contentLength) headers.set('Content-Length', contentLength);
+		headers.set('X-Content-Type-Options', 'nosniff');
+
+		// 缓存策略：避免共享缓存误缓存私有资源，仅允许浏览器本地缓存
+		headers.set('Cache-Control', 'private, max-age=86400');
+
+		// 文档默认下载，其余尽量 inline 以便 <img>/<video> 正常工作
+		const lowerType = contentType.toLowerCase();
+		const preferInline = lowerType.startsWith('image/') || lowerType.startsWith('video/');
+		headers.set('Content-Disposition', preferInline ? 'inline' : 'attachment');
+
+		return new Response(fileRes.body, { status: 200, headers });
+	} catch (e) {
+		console.error("Telegram Proxy Error:", e);
+		return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
 	}
+}
 
 async function processTelegramUpdate(request, env) {
 	let chatId = null;
@@ -347,28 +383,29 @@ async function processTelegramUpdate(request, env) {
 					mediaEmbeds.push(`![tg-image](${proxyUrl})`);
 					picObjects.push(proxyUrl);
 				} else {
-				// --- 二次上传模式 ---
-				const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${photo.file_id}`;
-				const fileInfoRes = await fetch(getFileUrl);
-				const fileInfo = await fileInfoRes.json();
-				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误: ${fileInfo.description}`);
-				const photoSize = Number(fileInfo.result?.file_size);
-				if (exceedsSizeLimit(photoSize)) {
-					throw new Error('Telegram photo exceeds size limit');
+					// --- 二次上传模式 ---
+					const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(photo.file_id)}`;
+					const fileInfoRes = await fetch(getFileUrl);
+					const fileInfo = await fileInfoRes.json();
+					if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误: ${fileInfo.description}`);
+					const photoSize = Number(fileInfo.result?.file_size);
+					if (exceedsSizeLimit(photoSize)) {
+						throw new Error('Telegram photo exceeds size limit');
+					}
+					const filePath = fileInfo.result.file_path;
+					const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+					const fileRes = await fetch(downloadUrl);
+					if (!fileRes.ok) throw new Error("从 Telegram 下载图片失败。");
+					const fileId = crypto.randomUUID();
+					const r2Key = `${noteId}/${fileId}`;
+					const contentType = fileRes.headers.get('content-type') || 'image/jpeg';
+					await bucket.put(r2Key, fileRes.body, { httpMetadata: { contentType } });
+					cleanupKeys.push(r2Key);
+					const fileUrl = `/api/files/${noteId}/${fileId}`;
+					mediaEmbeds.push(`![tg-image](${fileUrl})`);
+					picObjects.push(fileUrl);
 				}
-				const filePath = fileInfo.result.file_path;
-				const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
-				const fileRes = await fetch(downloadUrl);
-				if (!fileRes.ok) throw new Error("从 Telegram 下载图片失败。");
-				const fileId = crypto.randomUUID();
-				const r2Key = `${noteId}/${fileId}`;
-				await bucket.put(r2Key, fileRes.body);
-				cleanupKeys.push(r2Key);
-				const fileUrl = `/api/files/${noteId}/${fileId}`;
-				mediaEmbeds.push(`![tg-image](${fileUrl})`);
-				picObjects.push(fileUrl);
 			}
-		}
 
 			if (video) {
 				if (settings.telegramProxy) {
@@ -378,8 +415,8 @@ async function processTelegramUpdate(request, env) {
 					videoObjects.push(proxyUrl);
 					mediaEmbeds.push(`[tg-video](${proxyUrl})`);
 				} else {
-				// --- 二次上传模式 ---
-				const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${video.file_id}`;
+					// --- 二次上传模式 ---
+					const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(video.file_id)}`;
 				const fileInfoRes = await fetch(getFileUrl);
 				const fileInfo = await fileInfoRes.json();
 				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误 (video): ${fileInfo.description}`);
@@ -420,8 +457,8 @@ async function processTelegramUpdate(request, env) {
 				// 可以在正文加一个占位符，但这需要前端支持渲染
 				// finalContent += `\n\n[Proxy File: ${document.file_name}]`;
 			} else {
-				// --- 二次上传模式 ---
-				const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${document.file_id}`;
+					// --- 二次上传模式 ---
+					const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(document.file_id)}`;
 				const fileInfoRes = await fetch(getFileUrl);
 				const fileInfo = await fileInfoRes.json();
 				if (!fileInfo.ok) throw new Error(`Telegram getFile API 错误 (document): ${fileInfo.description}`);

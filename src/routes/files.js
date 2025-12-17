@@ -75,7 +75,9 @@ export async function handleFileRequest(noteId, fileId, request, env, session) {
 	const headers = new Headers();
 	object.writeHttpMetadata(headers); // 从 R2 对象中写入元数据（如 Content-Type）
 	headers.set('etag', object.httpEtag);
-	headers.set('Cache-Control', 'public, max-age=86400, immutable');
+	// 仅允许浏览器本地缓存，避免共享缓存误缓存私有资源
+	headers.set('Cache-Control', 'private, max-age=86400, immutable');
+	headers.set('X-Content-Type-Options', 'nosniff');
 
 	// --- 根据是否存在 fileMeta 来决定如何设置 headers ---
 	if (fileMeta) {
@@ -93,13 +95,18 @@ export async function handleFileRequest(noteId, fileId, request, env, session) {
 		}
 
 		const isPreview = new URL(request.url).searchParams.get('preview') === 'true';
-		const disposition = isPreview ? 'inline' : 'attachment';
+		const isSvg = contentType.toLowerCase() === 'image/svg+xml' || fileExtension === 'svg';
+		// SVG 可能携带脚本，强制下载以降低 XSS 风险
+		const disposition = isSvg ? 'attachment' : (isPreview ? 'inline' : 'attachment');
 		headers.set('Content-Disposition', `${disposition}; filename="${encodeURIComponent(safeName)}"`);
 	} else {
 		// 【情况二：元数据不存在】这是新的 Telegram 图片，我们只确保它能被浏览器正确显示
 		// Content-Type 已经通过 object.writeHttpMetadata(headers) 从 R2 中设置好了，
 		// 这通常足够让浏览器正确渲染图片。
 		// 我们将其设置为 inline，确保它在 <img> 标签中能显示而不是被下载。
+		if (!headers.has('Content-Type')) {
+			headers.set('Content-Type', 'application/octet-stream');
+		}
 		headers.set('Content-Disposition', 'inline');
 	}
 

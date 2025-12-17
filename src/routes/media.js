@@ -198,8 +198,12 @@ export async function handleServeStandaloneImage(imageId, env) {
 	const headers = new Headers();
 	object.writeHttpMetadata(headers);
 	headers.set('etag', object.httpEtag);
+	headers.set('X-Content-Type-Options', 'nosniff');
+	if (!headers.has('Content-Type')) {
+		headers.set('Content-Type', 'application/octet-stream');
+	}
 	// 设置长时间的浏览器缓存，因为这些图片内容是不可变的
-	headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+	headers.set('Cache-Control', 'private, max-age=31536000, immutable');
 
 	return new Response(object.body, { headers });
 }

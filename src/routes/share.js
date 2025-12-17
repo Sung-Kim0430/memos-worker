@@ -1,4 +1,4 @@
-import { SHARE_DEFAULT_TTL_SECONDS, SHARE_LOCK_TTL_SECONDS } from '../constants.js';
+import { MAX_UPLOAD_BYTES, SHARE_DEFAULT_TTL_SECONDS, SHARE_LOCK_TTL_SECONDS } from '../constants.js';
 import { sanitizeContent } from '../utils/content.js';
 import { errorResponse, jsonResponse } from '../utils/response.js';
 import { canModifyNote, requireSession } from '../utils/authz.js';
@@ -182,17 +182,56 @@ export async function handlePublicFileRequest(publicId, request, env) {
 			return errorResponse('TELEGRAM_NOT_CONFIGURED', 'Bot not configured', 500);
 		}
 		try {
-			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${kvData.telegramProxyId}`;
-			const fileInfoRes = await fetch(getFileUrl);
-			const fileInfo = await fileInfoRes.json();
-
-			if (!fileInfo.ok) {
-				console.error(`Telegram getFile API error for file_id ${kvData.telegramProxyId}:`, fileInfo.description);
-				return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo.description}`, 502);
+			if (!['GET', 'HEAD'].includes(request.method.toUpperCase())) {
+				return errorResponse('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
 			}
 
-			const temporaryDownloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-			return Response.redirect(temporaryDownloadUrl, 302);
+			// 重要：不要 302 到 Telegram 文件地址（会泄露 bot token）
+			const getFileUrl = `https://api.telegram.org/bot${botToken}/getFile?file_id=${encodeURIComponent(kvData.telegramProxyId)}`;
+			const fileInfoRes = await fetch(getFileUrl);
+			let fileInfo;
+			try {
+				fileInfo = await fileInfoRes.json();
+			} catch (parseErr) {
+				console.error("Telegram getFile API returned non-JSON response:", parseErr);
+				return errorResponse('TELEGRAM_API_ERROR', 'Telegram API error', 502);
+			}
+
+			if (!fileInfo?.ok) {
+				console.error(`Telegram getFile API error for file_id ${kvData.telegramProxyId}:`, fileInfo?.description);
+				return errorResponse('TELEGRAM_API_ERROR', `Telegram API error: ${fileInfo?.description || 'Unknown error'}`, 502);
+			}
+
+			const filePath = fileInfo?.result?.file_path;
+			const fileSize = Number(fileInfo?.result?.file_size);
+			if (!filePath) {
+				return errorResponse('TELEGRAM_API_ERROR', 'Telegram API returned invalid file info', 502);
+			}
+			if (Number.isFinite(fileSize) && fileSize > MAX_UPLOAD_BYTES) {
+				return errorResponse('FILE_TOO_LARGE', 'File too large.', 413);
+			}
+			const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+			const fileRes = await fetch(downloadUrl, { method: request.method });
+			if (!fileRes.ok) {
+				console.error("Telegram file download failed:", fileRes.status, fileRes.statusText);
+				return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 502);
+			}
+
+			const headers = new Headers();
+			const fallbackType = kvData.contentType || 'application/octet-stream';
+			const resolvedType = fileRes.headers.get('content-type') || fallbackType;
+			headers.set('Content-Type', resolvedType);
+			const len = fileRes.headers.get('content-length');
+			if (len) headers.set('Content-Length', len);
+			headers.set('X-Content-Type-Options', 'nosniff');
+				headers.set('Cache-Control', 'public, max-age=86400, immutable');
+
+				const safeName = kvData.fileName || 'tg-media';
+				const isSvg = resolvedType.toLowerCase() === 'image/svg+xml';
+				const disposition = isSvg ? 'attachment' : 'inline';
+				headers.set('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(safeName)}`);
+
+				return new Response(fileRes.body, { status: 200, headers });
 		} catch (e) {
 			console.error("Telegram Public Proxy Error:", e);
 			return errorResponse('TELEGRAM_PROXY_FAILED', 'Failed to proxy Telegram media', 500, e.message);
@@ -220,17 +259,20 @@ export async function handlePublicFileRequest(publicId, request, env) {
 	const headers = new Headers();
 	object.writeHttpMetadata(headers);
 	headers.set('etag', object.httpEtag);
+	headers.set('X-Content-Type-Options', 'nosniff');
 	headers.set('Cache-Control', 'public, max-age=86400, immutable');
-
-	headers.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-
-	if (contentType) {
-		headers.set('Content-Type', contentType);
+	let finalContentType = contentType;
+	if (finalContentType) {
+		headers.set('Content-Type', finalContentType);
 	} else {
 		const file = await env.NOTES_R2_BUCKET.head(object.key);
-		const detectedContentType = file?.httpMetadata?.contentType || 'application/octet-stream';
-		headers.set('Content-Type', detectedContentType);
+		finalContentType = file?.httpMetadata?.contentType || headers.get('Content-Type') || 'application/octet-stream';
+		headers.set('Content-Type', finalContentType);
 	}
+	const safeName = (fileName || 'file').toString();
+	const isSvg = (finalContentType || '').toLowerCase() === 'image/svg+xml';
+	const disposition = isSvg ? 'attachment' : 'inline';
+	headers.set('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(safeName)}`);
 
 	return new Response(object.body, { headers });
 }
